@@ -11,6 +11,7 @@ import { RunRepository } from '../../src/run/RunRepository.js';
 import type { CrawlRun } from '../../src/run/types.js';
 import { mapCrawlRunRow, type CrawlRunRow } from '../../src/run/types.js';
 import type { ContentProcessor } from '../../src/worker/ContentProcessor.js';
+import { EdgeRepository } from '../../src/content/EdgeRepository.js';
 import { NoopContentProcessor } from '../../src/worker/ContentProcessor.js';
 import type { RateLimiter } from '../../src/worker/RateLimiter.js';
 import type { RetryPolicy } from '../../src/worker/RetryPolicy.js';
@@ -69,6 +70,7 @@ export class DiscoveryStubContentProcessor implements ContentProcessor {
           normalizedUrl: this.followUpNormalizedUrl,
           host: this.followUpHost,
           depth: task.depth + 1,
+          source: 'test.stub',
         } satisfies DiscoveredLink,
       ],
     };
@@ -102,6 +104,7 @@ export async function runCrawlWithMocks(
         });
 
   const rateLimiter = options.rateLimiter ?? new SimpleRateLimiter();
+  const edgeRepository = new EdgeRepository();
 
   const summary = await runWorkerPool({
     run,
@@ -113,6 +116,7 @@ export async function runCrawlWithMocks(
     rateLimiter,
     retryPolicy: options.retryPolicy ?? new SimpleRetryPolicy(50),
     contentProcessor: options.contentProcessor ?? new NoopContentProcessor(),
+    edgeRepository,
     logger,
     pollMs: options.pollMs ?? 50,
     registerSignalHandlers: false,

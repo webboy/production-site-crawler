@@ -8,6 +8,7 @@ import type { RunRepository } from '../run/RunRepository.js';
 import type { CrawlRun } from '../run/types.js';
 import type { ScopePolicy } from '../url/ScopePolicy.js';
 import { urlHash } from '../url/urlHash.js';
+import type { EdgeRepository } from '../content/EdgeRepository.js';
 import { WORKER_POLL_MS } from './constants.js';
 import { parseRetryAfter } from './retryAfter.js';
 import type { ContentProcessor } from './ContentProcessor.js';
@@ -48,6 +49,7 @@ export interface WorkerDependencies {
   rateLimiter: RateLimiter;
   retryPolicy: RetryPolicy;
   contentProcessor: ContentProcessor;
+  edgeRepository: EdgeRepository;
   scopePolicy: ScopePolicy;
   logger: Logger;
   control: WorkerControl;
@@ -127,6 +129,22 @@ async function processTask(deps: WorkerDependencies, task: CrawlUrlTask): Promis
         result.contentType ??
         getHeader(response.headers, 'Content-Type') ??
         'application/octet-stream';
+
+      if (result.outcome === 'skipped_unsupported') {
+        await deps.frontier.markSkippedUnsupported(task.id, {
+          contentType,
+          reason: 'Unsupported content type',
+        });
+
+        deps.logger.info({
+          event: 'url_skipped_unsupported',
+          runId: deps.run.id,
+          urlId: task.id,
+          contentType,
+        });
+
+        return;
+      }
 
       await enqueueDiscoveredLinks(deps, task, result.discovered ?? []);
 
@@ -297,22 +315,34 @@ async function enqueueDiscoveredLinks(
   links: DiscoveredLink[],
 ): Promise<void> {
   for (const link of links) {
-    if (!deps.scopePolicy.isInScope(link.normalizedUrl)) {
-      continue;
+    const inScopeByPolicy = deps.scopePolicy.isInScope(link.normalizedUrl);
+    const withinDepth = deps.run.maxDepth === null || link.depth <= deps.run.maxDepth;
+    const shouldEnqueue = inScopeByPolicy && withinDepth;
+
+    let toUrlId: string | null = null;
+
+    if (shouldEnqueue) {
+      const enqueueResult = await deps.frontier.enqueueUrl({
+        crawlRunId: deps.run.id,
+        url: link.url,
+        normalizedUrl: link.normalizedUrl,
+        urlHash: urlHash(link.normalizedUrl),
+        host: link.host,
+        depth: link.depth,
+        discoveredFromUrlId: task.id,
+      });
+
+      toUrlId = enqueueResult.id;
     }
 
-    if (deps.run.maxDepth !== null && link.depth > deps.run.maxDepth) {
-      continue;
-    }
-
-    await deps.frontier.enqueueUrl({
+    await deps.edgeRepository.recordEdge({
       crawlRunId: deps.run.id,
-      url: link.url,
-      normalizedUrl: link.normalizedUrl,
-      urlHash: urlHash(link.normalizedUrl),
-      host: link.host,
-      depth: link.depth,
-      discoveredFromUrlId: task.id,
+      fromUrlId: task.id,
+      toUrlId,
+      discoveredUrl: link.url,
+      normalizedDiscoveredUrl: link.normalizedUrl,
+      inScope: shouldEnqueue,
+      source: link.source,
     });
   }
 }
@@ -326,6 +356,7 @@ export interface WorkerPoolRunOptions {
   rateLimiter: RateLimiter;
   retryPolicy: RetryPolicy;
   contentProcessor: ContentProcessor;
+  edgeRepository: EdgeRepository;
   scopePolicy: ScopePolicy;
   logger: Logger;
   control: WorkerControl;
@@ -341,6 +372,7 @@ export async function runWorkerPoolWorkers(options: WorkerPoolRunOptions): Promi
     rateLimiter: options.rateLimiter,
     retryPolicy: options.retryPolicy,
     contentProcessor: options.contentProcessor,
+    edgeRepository: options.edgeRepository,
     scopePolicy: options.scopePolicy,
     logger: options.logger,
     control: options.control,

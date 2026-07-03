@@ -9,6 +9,7 @@ import type { ContentProcessor } from './ContentProcessor.js';
 import type { RateLimiter } from './RateLimiter.js';
 import type { RetryPolicy } from './RetryPolicy.js';
 import { createWorkerControl, runWorkerPoolWorkers } from './worker.js';
+import type { EdgeRepository } from '../content/EdgeRepository.js';
 import type { WorkerPoolSummary } from './types.js';
 
 export interface WorkerPoolOptions {
@@ -21,6 +22,7 @@ export interface WorkerPoolOptions {
   rateLimiter: RateLimiter;
   retryPolicy: RetryPolicy;
   contentProcessor: ContentProcessor;
+  edgeRepository: EdgeRepository;
   logger: Logger;
   pollMs?: number;
   registerSignalHandlers?: boolean;
@@ -49,6 +51,7 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
     rateLimiter: options.rateLimiter,
     retryPolicy: options.retryPolicy,
     contentProcessor: options.contentProcessor,
+    edgeRepository: options.edgeRepository,
     scopePolicy,
     logger: options.logger,
     control,

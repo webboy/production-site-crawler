@@ -15,9 +15,12 @@ export interface DiscoveredLink {
   normalizedUrl: string;
   host: string;
   depth: number;
+  source: string;
+  anchorText?: string;
 }
 
 export interface ContentProcessResult {
+  outcome?: 'processed' | 'skipped_unsupported';
   bytes: number;
   discovered?: DiscoveredLink[];
   contentType?: string;

@@ -1,17 +1,25 @@
 import { Command, InvalidArgumentError } from 'commander';
 import type { AppConfig } from '../config/env.js';
+import { ContentRepository } from '../content/ContentRepository.js';
+import { EdgeRepository } from '../content/EdgeRepository.js';
+import { HandlerContentProcessor } from '../content/HandlerContentProcessor.js';
+import { HandlerRegistry } from '../content/HandlerRegistry.js';
+import { HtmlHandler } from '../content/HtmlHandler.js';
+import { ImageHandler } from '../content/ImageHandler.js';
+import { PdfHandler } from '../content/PdfHandler.js';
+import { VideoHandler } from '../content/VideoHandler.js';
+import { closePool } from '../db/pool.js';
 import { HttpFetchClient } from '../fetch/HttpFetchClient.js';
 import { MockFetchClient } from '../fetch/MockFetchClient.js';
 import type { FetchClient } from '../fetch/types.js';
+import { FrontierRepository } from '../frontier/FrontierRepository.js';
+import { createLogger } from '../log/logger.js';
 import { CrawlRunService } from '../run/CrawlRunService.js';
 import { RunRepository } from '../run/RunRepository.js';
-import { NoopContentProcessor } from '../worker/ContentProcessor.js';
+import { OutputStorage } from '../storage/OutputStorage.js';
 import { GlobalPauseRateLimiter } from '../worker/RateLimiter.js';
 import { BackoffRetryPolicy } from '../worker/RetryPolicy.js';
 import { runWorkerPool } from '../worker/WorkerPool.js';
-import { FrontierRepository } from '../frontier/FrontierRepository.js';
-import { createLogger } from '../log/logger.js';
-import { closePool } from '../db/pool.js';
 
 interface CrawlOptions {
   seed?: string;
@@ -156,6 +164,18 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
           logger,
         });
 
+        const edgeRepository = new EdgeRepository();
+        const contentProcessor = new HandlerContentProcessor(
+          new HandlerRegistry([
+            new HtmlHandler(),
+            new ImageHandler(),
+            new VideoHandler(),
+            new PdfHandler(),
+          ]),
+          new OutputStorage(options.outputDir),
+          new ContentRepository(),
+        );
+
         const summary = await runWorkerPool({
           run,
           concurrency: options.concurrency,
@@ -169,7 +189,8 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
             maxDelayMs: config.retry.maxDelayMs,
             jitterRatio: config.retry.jitterRatio,
           }),
-          contentProcessor: new NoopContentProcessor(),
+          contentProcessor,
+          edgeRepository,
           logger,
         });
 

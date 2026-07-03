@@ -24,6 +24,7 @@ describe('formatStatus', () => {
       permanent_failed: 2,
       blocked: 0,
       skipped_unsupported: 1,
+      redirected: 0,
     },
     contentKindCounts: {
       html: 10,

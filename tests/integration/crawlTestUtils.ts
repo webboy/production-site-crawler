@@ -159,11 +159,12 @@ export async function readCrawlUrl(id: string) {
     status: string;
     http_status_code: number | null;
     attempt_count: number;
+    redirect_count: number;
     finished_at: Date | null;
     last_error_type: string | null;
   }>(
     `
-      SELECT status, http_status_code, attempt_count, finished_at, last_error_type
+      SELECT status, http_status_code, attempt_count, redirect_count, finished_at, last_error_type
       FROM crawl_urls
       WHERE id = $1
     `,

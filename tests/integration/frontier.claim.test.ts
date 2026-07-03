@@ -142,6 +142,17 @@ describe.skipIf(!databaseReachable)('FrontierRepository claiming and transitions
       expect(counts.permanent_failed).toBe(1);
       expect(counts.blocked).toBe(1);
       expect(counts.skipped_unsupported).toBe(1);
+
+      const redirected = await repository.enqueueUrl(buildUrlInput(crawlRunId, 6));
+      await repository.markRedirected(redirected.id, { httpStatusCode: 302 });
+
+      await expect(readUrl(redirected.id)).resolves.toMatchObject({
+        status: 'redirected',
+        http_status_code: 302,
+      });
+
+      const countsAfterRedirect = await repository.getStatusCounts(crawlRunId);
+      expect(countsAfterRedirect.redirected).toBe(1);
     } finally {
       await cleanupCrawlRun(crawlRunId);
     }

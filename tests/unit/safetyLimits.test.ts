@@ -49,6 +49,7 @@ describe('SafetyLimits', () => {
       permanent_failed: 0,
       blocked: 0,
       skipped_unsupported: 0,
+      redirected: 0,
     });
 
     await expect(limits.shouldStop(frontier as FrontierRepository)).resolves.toEqual({
@@ -72,6 +73,7 @@ describe('SafetyLimits', () => {
       permanent_failed: 0,
       blocked: 0,
       skipped_unsupported: 0,
+      redirected: 0,
     });
 
     await expect(limits.shouldStop(frontier as FrontierRepository)).resolves.toEqual({
@@ -93,6 +95,7 @@ describe('SafetyLimits', () => {
       permanent_failed: 0,
       blocked: 0,
       skipped_unsupported: 0,
+      redirected: 0,
     });
 
     await expect(limits.shouldStop(frontier as FrontierRepository)).resolves.toEqual({
@@ -111,6 +114,7 @@ describe('SafetyLimits', () => {
       permanent_failed: 0,
       blocked: 0,
       skipped_unsupported: 0,
+      redirected: 0,
     });
 
     await expect(limits.shouldStop(frontier as FrontierRepository)).resolves.toEqual({

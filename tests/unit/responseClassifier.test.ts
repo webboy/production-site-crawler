@@ -48,6 +48,12 @@ describe('classifyResponse', () => {
     expect(classifyResponse({ statusCode: 500, headers: {}, body: null })).toBe('server_error');
   });
 
+  it('maps 301, 302, 303, 307, and 308 to redirect', () => {
+    for (const statusCode of [301, 302, 303, 307, 308]) {
+      expect(classifyResponse({ statusCode, headers: {}, body: null })).toBe('redirect');
+    }
+  });
+
   it('maps unexpected statuses to unexpected', () => {
     expect(classifyResponse({ statusCode: 418, headers: {}, body: null })).toBe('unexpected');
   });

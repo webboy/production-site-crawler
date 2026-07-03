@@ -117,6 +117,7 @@ describe.skipIf(!databaseReachable)('status integration', () => {
         retryable_failed: 0,
         permanent_failed: 0,
         skipped_unsupported: 0,
+        redirected: 0,
       });
       expect(report?.contentKindCounts).toEqual({
         html: 1,

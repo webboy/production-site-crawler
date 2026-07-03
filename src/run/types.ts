@@ -2,7 +2,13 @@ import type { QueryResultRow } from 'pg';
 import type { ScopePolicyName } from '../url/ScopePolicy.js';
 
 export type CrawlRunStatus =
-  'running' | 'completed' | 'completed_with_failures' | 'limit_reached' | 'failed' | 'cancelled';
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'completed_with_failures'
+  | 'limit_reached'
+  | 'failed'
+  | 'cancelled';
 
 export interface CrawlRun {
   id: string;
@@ -16,6 +22,7 @@ export interface CrawlRun {
   maxBytes: number | null;
   maxRuntimeSeconds: number | null;
   concurrency: number;
+  outputDir: string;
   totalBytes: number;
   startedAt: Date;
   finishedAt: Date | null;
@@ -34,6 +41,7 @@ export interface CrawlRunRow extends QueryResultRow {
   max_bytes: number | null;
   max_runtime_seconds: number | null;
   concurrency: number;
+  output_dir: string;
   total_bytes: number;
   started_at: Date;
   finished_at: Date | null;
@@ -50,7 +58,25 @@ export interface CreateRunInput {
   maxBytes: number | null;
   maxRuntimeSeconds: number | null;
   concurrency: number;
+  outputDir: string;
 }
+
+export interface UpdateRunConfigInput {
+  concurrency?: number;
+  maxUrls?: number | null;
+  maxDepth?: number | null;
+  maxBytes?: number | null;
+  maxRuntimeSeconds?: number | null;
+}
+
+const RESUMABLE_STATUSES = new Set<CrawlRunStatus>(['running', 'paused']);
+
+const FINAL_STATUSES = new Set<CrawlRunStatus>([
+  'completed',
+  'completed_with_failures',
+  'failed',
+  'cancelled',
+]);
 
 export function mapCrawlRunRow(row: CrawlRunRow): CrawlRun {
   return {
@@ -65,6 +91,7 @@ export function mapCrawlRunRow(row: CrawlRunRow): CrawlRun {
     maxBytes: row.max_bytes,
     maxRuntimeSeconds: row.max_runtime_seconds,
     concurrency: row.concurrency,
+    outputDir: row.output_dir,
     totalBytes: Number(row.total_bytes),
     startedAt: row.started_at,
     finishedAt: row.finished_at,
@@ -72,6 +99,15 @@ export function mapCrawlRunRow(row: CrawlRunRow): CrawlRun {
   };
 }
 
+export function isResumableRunStatus(status: CrawlRunStatus): boolean {
+  return RESUMABLE_STATUSES.has(status);
+}
+
+export function isFinalRunStatus(status: CrawlRunStatus): boolean {
+  return FINAL_STATUSES.has(status);
+}
+
+/** @deprecated Use isFinalRunStatus or isResumableRunStatus instead */
 export function isTerminalRunStatus(status: CrawlRunStatus): boolean {
-  return status !== 'running';
+  return status !== 'running' && status !== 'paused' && status !== 'limit_reached';
 }

@@ -17,6 +17,7 @@ function createRun(overrides: Partial<CrawlRun> = {}): CrawlRun {
     maxBytes: null,
     maxRuntimeSeconds: null,
     concurrency: 1,
+    outputDir: 'output',
     totalBytes: 0,
     startedAt: new Date('2026-07-03T10:00:00.000Z'),
     finishedAt: null,

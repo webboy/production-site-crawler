@@ -19,6 +19,7 @@ import { SimpleRateLimiter } from '../../src/worker/RateLimiter.js';
 import { SimpleRetryPolicy } from '../../src/worker/RetryPolicy.js';
 import type { DiscoveredLink, WorkerPoolSummary } from '../../src/worker/types.js';
 import { runWorkerPool } from '../../src/worker/WorkerPool.js';
+import { createWorkerControl, type WorkerControl } from '../../src/worker/worker.js';
 import { canReachDatabase, cleanupCrawlRun } from './frontierTestUtils.js';
 
 export { canReachDatabase, cleanupCrawlRun };
@@ -30,7 +31,25 @@ export interface RunCrawlWithMocksOptions {
   retryPolicy?: RetryPolicy;
   rateLimiter?: RateLimiter | TrackingRateLimiter;
   concurrency?: number;
+  outputDir?: string;
   resumeRunId?: string;
+  resumeOverrides?: {
+    concurrency?: number;
+    maxUrls?: number | null;
+    maxDepth?: number | null;
+    maxBytes?: number | null;
+    maxRuntimeSeconds?: number | null;
+    outputDir?: string;
+  };
+  resumeExplicit?: {
+    concurrency?: boolean;
+    maxUrls?: boolean;
+    maxDepth?: boolean;
+    maxBytes?: boolean;
+    maxRuntimeSeconds?: boolean;
+    outputDir?: boolean;
+  };
+  control?: WorkerControl;
   pollMs?: number;
   maxUrls?: number;
 }
@@ -94,13 +113,19 @@ export async function runCrawlWithMocks(
 
   const run =
     options.resumeRunId !== undefined
-      ? await crawlRunService.resumeRun(options.resumeRunId)
+      ? (
+          await crawlRunService.resumeRun(options.resumeRunId, {
+            overrides: options.resumeOverrides,
+            explicit: options.resumeExplicit,
+          })
+        ).run
       : await crawlRunService.createRun(options.seedUrl, {
           concurrency: options.concurrency ?? 1,
           maxUrls: options.maxUrls ?? config.crawl.maxUrls,
           maxDepth: config.crawl.maxDepth,
           maxBytes: config.crawl.maxBytes,
           maxRuntimeSeconds: config.crawl.maxRuntimeSeconds,
+          outputDir: options.outputDir ?? config.crawl.outputDir,
         });
 
   const rateLimiter = options.rateLimiter ?? new SimpleRateLimiter();
@@ -108,7 +133,7 @@ export async function runCrawlWithMocks(
 
   const summary = await runWorkerPool({
     run,
-    concurrency: options.concurrency ?? 1,
+    concurrency: run.concurrency,
     frontier: frontierRepository,
     runRepository,
     crawlRunService,
@@ -120,6 +145,7 @@ export async function runCrawlWithMocks(
     logger,
     pollMs: options.pollMs ?? 50,
     registerSignalHandlers: false,
+    control: options.control,
   });
 
   return { summary, runId: run.id, rateLimiter: rateLimiter as TrackingRateLimiter };
@@ -140,6 +166,7 @@ export async function readCrawlRun(runId: string): Promise<CrawlRun | null> {
         max_bytes,
         max_runtime_seconds,
         concurrency,
+        output_dir,
         total_bytes,
         started_at,
         finished_at,
@@ -202,6 +229,68 @@ export async function getUrlIdByNormalizedUrl(
   );
 
   return result.rows[0]?.id ?? null;
+}
+
+export { createWorkerControl };
+
+export async function updateCrawlRun(
+  runId: string,
+  updates: {
+    status?: string;
+    startedAtOffsetMs?: number;
+    maxRuntimeSeconds?: number | null;
+    maxUrls?: number | null;
+    concurrency?: number;
+    outputDir?: string;
+  },
+): Promise<void> {
+  const sets: string[] = [];
+  const values: unknown[] = [runId];
+  let paramIndex = 2;
+
+  if (updates.status !== undefined) {
+    sets.push(`status = $${paramIndex++}`);
+    values.push(updates.status);
+  }
+
+  if (updates.startedAtOffsetMs !== undefined) {
+    sets.push(`started_at = now() - ($${paramIndex++} * interval '1 millisecond')`);
+    values.push(updates.startedAtOffsetMs);
+  }
+
+  if (updates.maxRuntimeSeconds !== undefined) {
+    sets.push(`max_runtime_seconds = $${paramIndex++}`);
+    values.push(updates.maxRuntimeSeconds);
+  }
+
+  if (updates.maxUrls !== undefined) {
+    sets.push(`max_urls = $${paramIndex++}`);
+    values.push(updates.maxUrls);
+  }
+
+  if (updates.concurrency !== undefined) {
+    sets.push(`concurrency = $${paramIndex++}`);
+    values.push(updates.concurrency);
+  }
+
+  if (updates.outputDir !== undefined) {
+    sets.push(`output_dir = $${paramIndex++}`);
+    values.push(updates.outputDir);
+  }
+
+  if (sets.length === 0) {
+    return;
+  }
+
+  await query(
+    `
+      UPDATE crawl_runs
+      SET ${sets.join(', ')},
+          updated_at = now()
+      WHERE id = $1
+    `,
+    values,
+  );
 }
 
 export async function closeDatabasePool(): Promise<void> {

@@ -1,6 +1,12 @@
 import type { Pool } from 'pg';
 import { getPool } from '../db/pool.js';
-import type { CrawlRun, CrawlRunRow, CrawlRunStatus, CreateRunInput } from './types.js';
+import type {
+  CrawlRun,
+  CrawlRunRow,
+  CrawlRunStatus,
+  CreateRunInput,
+  UpdateRunConfigInput,
+} from './types.js';
 import { mapCrawlRunRow } from './types.js';
 
 const CRAWL_RUN_COLUMNS = `
@@ -15,6 +21,7 @@ const CRAWL_RUN_COLUMNS = `
   max_bytes,
   max_runtime_seconds,
   concurrency,
+  output_dir,
   total_bytes,
   started_at,
   finished_at,
@@ -36,9 +43,10 @@ export class RunRepository {
           max_depth,
           max_bytes,
           max_runtime_seconds,
-          concurrency
+          concurrency,
+          output_dir
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING ${CRAWL_RUN_COLUMNS}
       `,
       [
@@ -51,6 +59,7 @@ export class RunRepository {
         input.maxBytes,
         input.maxRuntimeSeconds,
         input.concurrency,
+        input.outputDir,
       ],
     );
 
@@ -101,6 +110,53 @@ export class RunRepository {
       `,
       [id, status],
     );
+  }
+
+  async pause(id: string): Promise<void> {
+    await this.pool.query(
+      `
+        UPDATE crawl_runs
+        SET status = 'paused',
+            finished_at = now(),
+            updated_at = now()
+        WHERE id = $1
+      `,
+      [id],
+    );
+  }
+
+  async markRunning(id: string, updates: UpdateRunConfigInput = {}): Promise<CrawlRun> {
+    const result = await this.pool.query<CrawlRunRow>(
+      `
+        UPDATE crawl_runs
+        SET status = 'running',
+            finished_at = NULL,
+            concurrency = COALESCE($2, concurrency),
+            max_urls = COALESCE($3, max_urls),
+            max_depth = COALESCE($4, max_depth),
+            max_bytes = COALESCE($5, max_bytes),
+            max_runtime_seconds = COALESCE($6, max_runtime_seconds),
+            updated_at = now()
+        WHERE id = $1
+        RETURNING ${CRAWL_RUN_COLUMNS}
+      `,
+      [
+        id,
+        updates.concurrency ?? null,
+        updates.maxUrls ?? null,
+        updates.maxDepth ?? null,
+        updates.maxBytes ?? null,
+        updates.maxRuntimeSeconds ?? null,
+      ],
+    );
+
+    const row = result.rows[0];
+
+    if (row === undefined) {
+      throw new Error(`Failed to mark crawl run ${id} as running`);
+    }
+
+    return mapCrawlRunRow(row);
   }
 
   async addBytes(id: string, bytes: number): Promise<void> {

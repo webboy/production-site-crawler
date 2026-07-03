@@ -3,10 +3,9 @@ import type { StatusCounts } from '../frontier/types.js';
 import { ScopePolicy, type ScopePolicyName } from '../url/ScopePolicy.js';
 import { normalize } from '../url/UrlNormalizer.js';
 import { urlHash } from '../url/urlHash.js';
-import { STALE_IN_PROGRESS_MS } from '../worker/constants.js';
 import { RunRepository } from './RunRepository.js';
 import type { CrawlRun, CrawlRunStatus } from './types.js';
-import { isTerminalRunStatus } from './types.js';
+import { isFinalRunStatus, isResumableRunStatus } from './types.js';
 
 export interface CreateRunOptions {
   scopePolicy?: ScopePolicyName;
@@ -15,16 +14,90 @@ export interface CreateRunOptions {
   maxDepth: number | null;
   maxBytes: number | null;
   maxRuntimeSeconds: number | null;
+  outputDir: string;
+}
+
+export interface ResumeRunOverrides {
+  concurrency?: number;
+  maxUrls?: number | null;
+  maxDepth?: number | null;
+  maxBytes?: number | null;
+  maxRuntimeSeconds?: number | null;
+  outputDir?: string;
+}
+
+export interface ResumeRunExplicitFlags {
+  concurrency?: boolean;
+  maxUrls?: boolean;
+  maxDepth?: boolean;
+  maxBytes?: boolean;
+  maxRuntimeSeconds?: boolean;
+  outputDir?: boolean;
+}
+
+export interface ResumeRunOptions {
+  overrides?: ResumeRunOverrides;
+  explicit?: ResumeRunExplicitFlags;
+}
+
+export interface ResumeRunResult {
+  run: CrawlRun;
+  previousStatus: CrawlRunStatus;
+  recoveredInProgressCount: number;
 }
 
 export interface FinalizeRunContext {
   limitReached?: boolean;
-  cancelled?: boolean;
+  shutdownRequested?: boolean;
 }
 
 export interface FinalizeRunResult {
   finalStatus: CrawlRunStatus;
   statusCounts: StatusCounts;
+}
+
+function hasExplicitLimitIncrease(
+  run: CrawlRun,
+  overrides: ResumeRunOverrides,
+  explicit: ResumeRunExplicitFlags,
+): boolean {
+  if (
+    explicit.maxUrls &&
+    overrides.maxUrls != null &&
+    run.maxUrls !== null &&
+    overrides.maxUrls > run.maxUrls
+  ) {
+    return true;
+  }
+
+  if (
+    explicit.maxDepth &&
+    overrides.maxDepth != null &&
+    run.maxDepth !== null &&
+    overrides.maxDepth > run.maxDepth
+  ) {
+    return true;
+  }
+
+  if (
+    explicit.maxBytes &&
+    overrides.maxBytes != null &&
+    run.maxBytes !== null &&
+    overrides.maxBytes > run.maxBytes
+  ) {
+    return true;
+  }
+
+  if (
+    explicit.maxRuntimeSeconds &&
+    overrides.maxRuntimeSeconds != null &&
+    run.maxRuntimeSeconds !== null &&
+    overrides.maxRuntimeSeconds >= run.maxRuntimeSeconds
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 export class CrawlRunService {
@@ -54,6 +127,7 @@ export class CrawlRunService {
       maxBytes: options.maxBytes,
       maxRuntimeSeconds: options.maxRuntimeSeconds,
       concurrency: options.concurrency,
+      outputDir: options.outputDir,
     });
 
     const seedHost = new URL(normalizedSeedUrl).hostname;
@@ -70,20 +144,55 @@ export class CrawlRunService {
     return run;
   }
 
-  async resumeRun(runId: string): Promise<CrawlRun> {
+  async resumeRun(runId: string, options: ResumeRunOptions = {}): Promise<ResumeRunResult> {
     const run = await this.runRepository.getById(runId);
 
     if (run === null) {
       throw new Error(`Run not found: ${runId}`);
     }
 
-    if (isTerminalRunStatus(run.status)) {
+    const overrides = options.overrides ?? {};
+    const explicit = options.explicit ?? {};
+    const previousStatus = run.status;
+
+    if (isFinalRunStatus(run.status)) {
       throw new Error(`Run is terminal: ${run.status}`);
     }
 
-    await this.frontierRepository.recoverStaleInProgress(runId, STALE_IN_PROGRESS_MS);
+    if (run.status === 'limit_reached') {
+      if (!hasExplicitLimitIncrease(run, overrides, explicit)) {
+        throw new Error(
+          'Run reached a limit; resume requires an explicit increased limit override',
+        );
+      }
+    } else if (!isResumableRunStatus(run.status)) {
+      throw new Error(`Run is not resumable: ${run.status}`);
+    }
 
-    return run;
+    if (explicit.outputDir && overrides.outputDir !== undefined && overrides.outputDir !== run.outputDir) {
+      throw new Error(
+        `Output directory mismatch: run uses ${run.outputDir}, but ${overrides.outputDir} was requested`,
+      );
+    }
+
+    const configUpdates = {
+      concurrency: explicit.concurrency ? overrides.concurrency : undefined,
+      maxUrls: explicit.maxUrls ? overrides.maxUrls : undefined,
+      maxDepth: explicit.maxDepth ? overrides.maxDepth : undefined,
+      maxBytes: explicit.maxBytes ? overrides.maxBytes : undefined,
+      maxRuntimeSeconds: explicit.maxRuntimeSeconds ? overrides.maxRuntimeSeconds : undefined,
+    };
+
+    const recoveredInProgressCount =
+      await this.frontierRepository.recoverAllInProgress(runId);
+
+    const resumedRun = await this.runRepository.markRunning(runId, configUpdates);
+
+    return {
+      run: resumedRun,
+      previousStatus,
+      recoveredInProgressCount,
+    };
   }
 
   async finalizeRun(runId: string, context: FinalizeRunContext = {}): Promise<FinalizeRunResult> {
@@ -91,17 +200,19 @@ export class CrawlRunService {
 
     let finalStatus: CrawlRunStatus;
 
-    if (context.cancelled) {
-      finalStatus = 'cancelled';
+    if (context.shutdownRequested) {
+      await this.runRepository.pause(runId);
+      finalStatus = 'paused';
     } else if (context.limitReached) {
       finalStatus = 'limit_reached';
+      await this.runRepository.finish(runId, finalStatus);
     } else if (statusCounts.permanent_failed > 0 || statusCounts.blocked > 0) {
       finalStatus = 'completed_with_failures';
+      await this.runRepository.finish(runId, finalStatus);
     } else {
       finalStatus = 'completed';
+      await this.runRepository.finish(runId, finalStatus);
     }
-
-    await this.runRepository.finish(runId, finalStatus);
 
     return { finalStatus, statusCounts };
   }

@@ -284,6 +284,22 @@ export class FrontierRepository {
     return result.rowCount ?? 0;
   }
 
+  async recoverAllInProgress(crawlRunId: string): Promise<number> {
+    const result = await this.pool.query(
+      `
+        UPDATE crawl_urls
+        SET status = 'queued',
+            claimed_at = NULL,
+            updated_at = now()
+        WHERE crawl_run_id = $1
+          AND status = 'in_progress'
+      `,
+      [crawlRunId],
+    );
+
+    return result.rowCount ?? 0;
+  }
+
   async countInProgress(crawlRunId: string): Promise<number> {
     const result = await this.pool.query<CountRow>(
       `

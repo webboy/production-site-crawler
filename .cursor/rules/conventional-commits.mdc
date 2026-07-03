@@ -1,0 +1,55 @@
+---
+description: Conventional Commits format for all git commit messages
+alwaysApply: true
+---
+
+# Conventional Commits
+
+Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) for every commit in this repository.
+
+## Format
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+- Use lowercase type.
+- Description: imperative mood, no trailing period, ~72 chars max.
+- Body and footers are optional; separate them from the title with a blank line.
+
+## Types
+
+| Type | Use when |
+|------|----------|
+| `feat` | New feature (MINOR in SemVer) |
+| `fix` | Bug fix (PATCH in SemVer) |
+| `docs` | Documentation only |
+| `style` | Formatting, no logic change |
+| `refactor` | Code change, not feat/fix |
+| `perf` | Performance improvement |
+| `test` | Tests only |
+| `build` | Build system or dependencies |
+| `ci` | CI configuration |
+| `chore` | Maintenance (e.g. `.gitignore`) |
+| `revert` | Revert a prior commit |
+
+Breaking changes: append `!` after type/scope (`feat!:`) or add footer `BREAKING CHANGE: <description>`.
+
+## Examples
+
+```
+feat(profile): add interactive timeline section
+fix(nav): correct mobile menu z-index
+docs: update README setup steps
+chore: exclude docs directory from version control
+```
+
+## When committing
+
+- One logical change per commit when possible.
+- Match the repo's existing scope names if scopes are already in use.
+- The `.githooks/commit-msg` hook validates format locally when hooks are enabled.

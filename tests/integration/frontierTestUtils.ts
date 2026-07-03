@@ -3,6 +3,14 @@ import { closePool, query } from '../../src/db/pool.js';
 import { FrontierRepository } from '../../src/frontier/FrontierRepository.js';
 
 export async function canReachDatabase(): Promise<boolean> {
+  if (process.env.INTEGRATION_DATABASE_REACHABLE === '1') {
+    return true;
+  }
+
+  if (process.env.INTEGRATION_DATABASE_REACHABLE === '0') {
+    return false;
+  }
+
   try {
     await query('SELECT 1');
     return true;

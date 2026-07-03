@@ -51,7 +51,7 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
     }
   });
 
-  it('persists files, contents, edges, and enqueues discovered in-scope URLs', async () => {
+  it('persists files, contents, edges, and enqueues discovered in-scope URLs (§15 scenario 1: HTML to HTML + image)', async () => {
     outputDir = await mkdtemp(path.join(os.tmpdir(), 'crawler-output-'));
 
     const seedUrl = 'https://example.com/content-seed';
@@ -147,9 +147,13 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
 
       expect(contents.rows.map((row) => row.kind).sort()).toEqual(['html', 'html', 'image', 'pdf']);
 
-      const edges = await query<{ in_scope: boolean; normalized_discovered_url: string | null }>(
+      const edges = await query<{
+        in_scope: boolean;
+        to_url_id: string | null;
+        normalized_discovered_url: string | null;
+      }>(
         `
-          SELECT in_scope, normalized_discovered_url
+          SELECT in_scope, to_url_id, normalized_discovered_url
           FROM url_edges
           WHERE crawl_run_id = $1
         `,
@@ -166,20 +170,26 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
       expect(
         edges.rows.some((row) => row.normalized_discovered_url?.includes('other.example.org')),
       ).toBe(true);
-      expect(
-        edges.rows.find((row) => row.normalized_discovered_url?.includes('other.example.org'))
-          ?.in_scope,
-      ).toBe(false);
+      const externalEdge = edges.rows.find((row) =>
+        row.normalized_discovered_url?.includes('other.example.org'),
+      );
+      expect(externalEdge).toMatchObject({ in_scope: false, to_url_id: null });
 
-      expect(await getUrlIdByNormalizedUrl(runId, childHtmlNormalized)).toBeTruthy();
-      expect(await getUrlIdByNormalizedUrl(runId, imageNormalized)).toBeTruthy();
+      const childHtmlUrlId = await getUrlIdByNormalizedUrl(runId, childHtmlNormalized);
+      const imageUrlId = await getUrlIdByNormalizedUrl(runId, imageNormalized);
+      expect(childHtmlUrlId).toBeTruthy();
+      expect(imageUrlId).toBeTruthy();
+      await expect(readCrawlUrl(childHtmlUrlId as string)).resolves.toMatchObject({
+        status: 'done',
+      });
+      await expect(readCrawlUrl(imageUrlId as string)).resolves.toMatchObject({ status: 'done' });
       expect(await getUrlIdByNormalizedUrl(runId, pdfNormalized)).toBeTruthy();
     } finally {
       await cleanupCrawlRun(runId);
     }
   });
 
-  it('records two edges but one contents row when the same target is discovered twice', async () => {
+  it('records two edges but one contents row when the same target is discovered twice (§15 scenario 2)', async () => {
     outputDir = await mkdtemp(path.join(os.tmpdir(), 'crawler-output-'));
 
     const seedUrl = 'https://example.com/dedup-seed';
@@ -244,9 +254,9 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
         [runId, targetNormalized],
       );
 
-      const edgeRows = await query<{ count: string }>(
+      const edgeDetails = await query<{ to_url_id: string | null }>(
         `
-          SELECT count(*)::text AS count
+          SELECT to_url_id
           FROM url_edges
           WHERE crawl_run_id = $1
             AND normalized_discovered_url = $2
@@ -256,7 +266,11 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
 
       expect(Number(targetRows.rows[0]?.count)).toBe(1);
       expect(Number(contentRows.rows[0]?.count)).toBe(1);
-      expect(Number(edgeRows.rows[0]?.count)).toBe(2);
+      expect(edgeDetails.rows).toHaveLength(2);
+      expect(
+        edgeDetails.rows.every((row) => row.to_url_id === edgeDetails.rows[0]?.to_url_id),
+      ).toBe(true);
+      expect(edgeDetails.rows[0]?.to_url_id).toBeTruthy();
     } finally {
       await cleanupCrawlRun(runId);
     }

@@ -44,6 +44,7 @@ export function createWorkerControl(): WorkerControl {
 
 export interface WorkerDependencies {
   run: CrawlRun;
+  sessionStartedAtMs: number;
   frontier: FrontierRepository;
   runRepository: RunRepository;
   fetchClient: FetchClient;
@@ -64,7 +65,7 @@ export function sleep(ms: number): Promise<void> {
 }
 
 export async function runWorker(deps: WorkerDependencies): Promise<void> {
-  const safetyLimits = new SafetyLimits(deps.run, deps.run.startedAt.getTime());
+  const safetyLimits = new SafetyLimits(deps.run, deps.sessionStartedAtMs);
   const pollMs = deps.pollMs ?? WORKER_POLL_MS;
 
   while (!deps.control.getShutdownRequested() && !deps.control.getLimitReached()) {
@@ -460,6 +461,7 @@ async function enqueueDiscoveredLinks(
 export interface WorkerPoolRunOptions {
   run: CrawlRun;
   concurrency: number;
+  sessionStartedAtMs: number;
   frontier: FrontierRepository;
   runRepository: RunRepository;
   fetchClient: FetchClient;
@@ -476,6 +478,7 @@ export interface WorkerPoolRunOptions {
 export async function runWorkerPoolWorkers(options: WorkerPoolRunOptions): Promise<void> {
   const workerDeps: WorkerDependencies = {
     run: options.run,
+    sessionStartedAtMs: options.sessionStartedAtMs,
     frontier: options.frontier,
     runRepository: options.runRepository,
     fetchClient: options.fetchClient,

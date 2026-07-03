@@ -8,7 +8,7 @@ import { ScopePolicy } from '../url/ScopePolicy.js';
 import type { ContentProcessor } from './ContentProcessor.js';
 import type { RateLimiter } from './RateLimiter.js';
 import type { RetryPolicy } from './RetryPolicy.js';
-import { createWorkerControl, runWorkerPoolWorkers } from './worker.js';
+import { createWorkerControl, runWorkerPoolWorkers, type WorkerControl } from './worker.js';
 import type { EdgeRepository } from '../content/EdgeRepository.js';
 import type { WorkerPoolSummary } from './types.js';
 
@@ -26,10 +26,12 @@ export interface WorkerPoolOptions {
   logger: Logger;
   pollMs?: number;
   registerSignalHandlers?: boolean;
+  control?: WorkerControl;
 }
 
 export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerPoolSummary> {
-  const control = createWorkerControl();
+  const control = options.control ?? createWorkerControl();
+  const sessionStartedAtMs = Date.now();
   const scopePolicy = new ScopePolicy(options.run.normalizedSeedUrl, options.run.scopePolicy);
 
   const handleShutdown = (): void => {
@@ -45,6 +47,7 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
   await runWorkerPoolWorkers({
     run: options.run,
     concurrency: options.concurrency,
+    sessionStartedAtMs,
     frontier: options.frontier,
     runRepository: options.runRepository,
     fetchClient: options.fetchClient,
@@ -60,7 +63,7 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
 
   const finalizeResult = await options.crawlRunService.finalizeRun(options.run.id, {
     limitReached: control.getLimitReached(),
-    cancelled: control.getShutdownRequested(),
+    shutdownRequested: control.getShutdownRequested(),
   });
 
   options.logger.info({

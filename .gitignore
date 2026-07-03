@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build and test output
+dist/
+build/
+coverage/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Crawler output artifacts
+output/**
+!output/
+!output/html/
+!output/html/.gitkeep
+!output/images/
+!output/images/.gitkeep
+!output/videos/
+!output/videos/.gitkeep
+!output/pdfs/
+!output/pdfs/.gitkeep

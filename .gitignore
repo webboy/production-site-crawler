@@ -20,9 +20,6 @@ logs/
 .idea/
 .vscode/
 
-# Local/internal planning notes
-docs/
-
 # Crawler output artifacts
 output/**
 !output/

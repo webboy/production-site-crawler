@@ -1,8 +1,10 @@
 {
   "name": "production-site-crawler",
   "version": "1.0.0",
-  "description": "A production-oriented web crawler take-home assignment built around a TypeScript/Node.js CLI, PostgreSQL-backed crawl state, and an external Fetch API. The implementation will crawl from a seed URL, persist fetched content by type with metadata, and support durable, resumable, concurrency-safe execution in later phases.",
-  "main": "index.js",
+  "description": "A production-oriented TypeScript/Node.js CLI crawler with PostgreSQL-backed crawl state, resumable workers, content processing, and status reporting.",
+  "bin": {
+    "production-site-crawler": "src/cli/index.ts"
+  },
   "directories": {
     "doc": "docs"
   },
@@ -29,8 +31,8 @@
     "url": "git+https://github.com/webboy/production-site-crawler.git"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Nemanja",
+  "license": "MIT",
   "type": "module",
   "bugs": {
     "url": "https://github.com/webboy/production-site-crawler/issues"

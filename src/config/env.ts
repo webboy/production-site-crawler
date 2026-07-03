@@ -1,0 +1,88 @@
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+export interface AppConfig {
+  databaseUrl: string;
+  pg: {
+    host: string;
+    port: number;
+    database: string;
+    user: string;
+    password: string;
+  };
+  fetchApiBaseUrl: string;
+  logLevel: string;
+  crawl: {
+    concurrency: number;
+    maxUrls: number;
+    maxDepth: number;
+    maxBytes: number;
+    maxRuntimeSeconds: number;
+    outputDir: string;
+  };
+  nodeEnv: string;
+}
+
+const DEFAULTS = {
+  databaseUrl: 'postgres://crawler:crawler@localhost:5432/production_site_crawler',
+  pgHost: 'localhost',
+  pgPort: 5432,
+  pgDatabase: 'production_site_crawler',
+  pgUser: 'crawler',
+  pgPassword: 'crawler',
+  fetchApiBaseUrl: 'http://mock-api.mock.com/fetch',
+  logLevel: 'info',
+  concurrency: 5,
+  maxUrls: 1000,
+  maxDepth: 5,
+  maxBytes: 104857600,
+  maxRuntimeSeconds: 3600,
+  outputDir: 'output',
+  nodeEnv: 'development',
+} as const;
+
+function readString(env: NodeJS.ProcessEnv, name: string, fallback: string): string {
+  const value = env[name];
+  return value === undefined || value === '' ? fallback : value;
+}
+
+function readNumber(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const rawValue = env[name];
+
+  if (rawValue === undefined || rawValue === '') {
+    return fallback;
+  }
+
+  const value = Number(rawValue);
+
+  if (!Number.isFinite(value)) {
+    throw new Error(`Invalid numeric environment variable ${name}: ${rawValue}`);
+  }
+
+  return value;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  return {
+    databaseUrl: readString(env, 'DATABASE_URL', DEFAULTS.databaseUrl),
+    pg: {
+      host: readString(env, 'PGHOST', DEFAULTS.pgHost),
+      port: readNumber(env, 'PGPORT', DEFAULTS.pgPort),
+      database: readString(env, 'PGDATABASE', DEFAULTS.pgDatabase),
+      user: readString(env, 'PGUSER', DEFAULTS.pgUser),
+      password: readString(env, 'PGPASSWORD', DEFAULTS.pgPassword),
+    },
+    fetchApiBaseUrl: readString(env, 'FETCH_API_BASE_URL', DEFAULTS.fetchApiBaseUrl),
+    logLevel: readString(env, 'LOG_LEVEL', DEFAULTS.logLevel),
+    crawl: {
+      concurrency: readNumber(env, 'CONCURRENCY', DEFAULTS.concurrency),
+      maxUrls: readNumber(env, 'MAX_URLS', DEFAULTS.maxUrls),
+      maxDepth: readNumber(env, 'MAX_DEPTH', DEFAULTS.maxDepth),
+      maxBytes: readNumber(env, 'MAX_BYTES', DEFAULTS.maxBytes),
+      maxRuntimeSeconds: readNumber(env, 'MAX_RUNTIME_SECONDS', DEFAULTS.maxRuntimeSeconds),
+      outputDir: readString(env, 'OUTPUT_DIR', DEFAULTS.outputDir),
+    },
+    nodeEnv: readString(env, 'NODE_ENV', DEFAULTS.nodeEnv),
+  };
+}

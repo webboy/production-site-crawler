@@ -7,7 +7,8 @@ export type CrawlUrlStatus =
   | 'retryable_failed'
   | 'permanent_failed'
   | 'blocked'
-  | 'skipped_unsupported';
+  | 'skipped_unsupported'
+  | 'redirected';
 
 export interface CrawlUrlTask {
   id: string;
@@ -17,6 +18,7 @@ export interface CrawlUrlTask {
   urlHash: string;
   host: string;
   depth: number;
+  redirectCount: number;
   status: CrawlUrlStatus;
   httpStatusCode: number | null;
   contentType: string | null;
@@ -40,6 +42,7 @@ export interface CrawlUrlRow extends QueryResultRow {
   url_hash: string;
   host: string;
   depth: number;
+  redirect_count: number;
   status: CrawlUrlStatus;
   http_status_code: number | null;
   content_type: string | null;
@@ -62,6 +65,7 @@ export interface EnqueueUrlInput {
   urlHash: string;
   host: string;
   depth: number;
+  redirectCount?: number;
   discoveredFromUrlId?: string | null;
 }
 
@@ -98,6 +102,10 @@ export interface MarkSkippedUnsupportedInput {
   reason: string;
 }
 
+export interface MarkRedirectedInput {
+  httpStatusCode: number;
+}
+
 export type StatusCounts = Record<CrawlUrlStatus, number>;
 
 export function mapCrawlUrlRow(row: CrawlUrlRow): CrawlUrlTask {
@@ -109,6 +117,7 @@ export function mapCrawlUrlRow(row: CrawlUrlRow): CrawlUrlTask {
     urlHash: row.url_hash,
     host: row.host,
     depth: row.depth,
+    redirectCount: row.redirect_count,
     status: row.status,
     httpStatusCode: row.http_status_code,
     contentType: row.content_type,

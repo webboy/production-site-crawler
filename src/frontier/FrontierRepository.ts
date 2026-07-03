@@ -9,6 +9,7 @@ import type {
   MarkBlockedInput,
   MarkPermanentFailureInput,
   MarkRetryableFailureInput,
+  MarkRedirectedInput,
   MarkSkippedUnsupportedInput,
   MarkSucceededInput,
   StatusCounts,
@@ -23,6 +24,7 @@ const CRAWL_URL_COLUMNS = `
   url_hash,
   host,
   depth,
+  redirect_count,
   status,
   http_status_code,
   content_type,
@@ -46,6 +48,7 @@ const ALL_STATUSES: CrawlUrlStatus[] = [
   'permanent_failed',
   'blocked',
   'skipped_unsupported',
+  'redirected',
 ];
 
 interface CountRow extends QueryResultRow {
@@ -70,10 +73,11 @@ export class FrontierRepository {
           url_hash,
           host,
           depth,
+          redirect_count,
           status,
           discovered_from_url_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)
         ON CONFLICT (crawl_run_id, normalized_url) DO NOTHING
         RETURNING id
       `,
@@ -84,6 +88,7 @@ export class FrontierRepository {
         input.urlHash,
         input.host,
         input.depth,
+        input.redirectCount ?? 0,
         input.discoveredFromUrlId ?? null,
       ],
     );
@@ -245,6 +250,20 @@ export class FrontierRepository {
         WHERE id = $1
       `,
       [taskId, input.contentType, input.reason],
+    );
+  }
+
+  async markRedirected(taskId: string, input: MarkRedirectedInput): Promise<void> {
+    await this.pool.query(
+      `
+        UPDATE crawl_urls
+        SET status = 'redirected',
+            http_status_code = $2,
+            finished_at = now(),
+            updated_at = now()
+        WHERE id = $1
+      `,
+      [taskId, input.httpStatusCode],
     );
   }
 

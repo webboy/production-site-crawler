@@ -9,6 +9,7 @@ import { ImageHandler } from '../content/ImageHandler.js';
 import { PdfHandler } from '../content/PdfHandler.js';
 import { VideoHandler } from '../content/VideoHandler.js';
 import { closePool } from '../db/pool.js';
+import type { BodyDecodeStrategy } from '../fetch/body.js';
 import { HttpFetchClient } from '../fetch/HttpFetchClient.js';
 import { MockFetchClient } from '../fetch/MockFetchClient.js';
 import type { FetchClient } from '../fetch/types.js';
@@ -33,6 +34,7 @@ interface CrawlOptions {
   maxRuntimeSeconds: number;
   outputDir: string;
   mockFetch?: boolean;
+  bodyStrategy?: BodyDecodeStrategy;
 }
 
 function parseUrl(value: string): string {
@@ -67,6 +69,14 @@ function parseUuid(value: string): string {
   return value;
 }
 
+function parseBodyStrategy(value: string): BodyDecodeStrategy {
+  if (value === 'auto' || value === 'base64' || value === 'utf8') {
+    return value;
+  }
+
+  throw new InvalidArgumentError('body-strategy must be auto, base64, or utf8');
+}
+
 function createFetchClient(config: AppConfig, options: CrawlOptions): FetchClient {
   if (options.mockFetch) {
     const mockClient = new MockFetchClient();
@@ -82,7 +92,10 @@ function createFetchClient(config: AppConfig, options: CrawlOptions): FetchClien
     return mockClient;
   }
 
-  return new HttpFetchClient({ baseUrl: config.fetchApiBaseUrl });
+  return new HttpFetchClient({
+    baseUrl: config.fetchApiBaseUrl,
+    bodyStrategy: options.bodyStrategy ?? config.fetchBodyStrategy,
+  });
 }
 
 export function registerCrawlCommand(program: Command, config: AppConfig): void {
@@ -123,6 +136,12 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
     )
     .option('--output-dir <path>', 'Directory for persisted crawler output', config.crawl.outputDir)
     .option('--mock-fetch', 'Use mock fetch behavior for local development and tests')
+    .option(
+      '--body-strategy <strategy>',
+      'How to decode the Fetch API body: auto | base64 | utf8',
+      parseBodyStrategy,
+      config.fetchBodyStrategy,
+    )
     .action(async (options: CrawlOptions) => {
       const logger = createLogger(config);
 

@@ -1,5 +1,6 @@
 import { normalizeBody } from './body.js';
 import type { BodyDecodeStrategy } from './body.js';
+import { getHeader } from './headers.js';
 import { FetchTransportError } from './types.js';
 import type { FetchClient, FetchResponse } from './types.js';
 
@@ -49,7 +50,11 @@ function mapEnvelope(envelope: RawFetchEnvelope, bodyStrategy: BodyDecodeStrateg
     return {
       statusCode,
       headers: envelope.headers,
-      body: normalizeBody(envelope.body ?? null, bodyStrategy),
+      body: normalizeBody(
+        envelope.body ?? null,
+        bodyStrategy,
+        getHeader(envelope.headers, 'Content-Type'),
+      ),
     };
   } catch (error) {
     throw new FetchTransportError({
@@ -70,7 +75,7 @@ export class HttpFetchClient implements FetchClient {
     this.baseUrl = options.baseUrl;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.bodyStrategy = options.bodyStrategy ?? 'base64';
+    this.bodyStrategy = options.bodyStrategy ?? 'auto';
   }
 
   async fetchUrl(url: string): Promise<FetchResponse> {

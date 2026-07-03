@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import type { BodyDecodeStrategy } from '../fetch/body.js';
 
 dotenv.config();
 
@@ -12,6 +13,7 @@ export interface AppConfig {
     password: string;
   };
   fetchApiBaseUrl: string;
+  fetchBodyStrategy: BodyDecodeStrategy;
   logLevel: string;
   crawl: {
     concurrency: number;
@@ -53,6 +55,7 @@ const DEFAULTS = {
   retryJitterRatio: 0.25,
   rateLimitDelayMs: 150,
   rateLimitDefaultPauseMs: 5_000,
+  fetchBodyStrategy: 'auto',
   nodeEnv: 'development',
 } as const;
 
@@ -93,6 +96,20 @@ function readFloat(env: NodeJS.ProcessEnv, name: string, fallback: number): numb
   return value;
 }
 
+function readBodyStrategy(env: NodeJS.ProcessEnv, name: string): BodyDecodeStrategy {
+  const raw = env[name];
+
+  if (raw === undefined || raw === '') {
+    return 'auto';
+  }
+
+  if (raw === 'auto' || raw === 'base64' || raw === 'utf8') {
+    return raw;
+  }
+
+  throw new Error(`Invalid ${name}: ${raw} (expected auto | base64 | utf8)`);
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     databaseUrl: readString(env, 'DATABASE_URL', DEFAULTS.databaseUrl),
@@ -104,6 +121,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       password: readString(env, 'PGPASSWORD', DEFAULTS.pgPassword),
     },
     fetchApiBaseUrl: readString(env, 'FETCH_API_BASE_URL', DEFAULTS.fetchApiBaseUrl),
+    fetchBodyStrategy: readBodyStrategy(env, 'FETCH_BODY_STRATEGY'),
     logLevel: readString(env, 'LOG_LEVEL', DEFAULTS.logLevel),
     crawl: {
       concurrency: readNumber(env, 'CONCURRENCY', DEFAULTS.concurrency),

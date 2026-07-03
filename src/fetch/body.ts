@@ -1,4 +1,4 @@
-export type BodyDecodeStrategy = 'base64' | 'utf8';
+export type BodyDecodeStrategy = 'auto' | 'base64' | 'utf8';
 
 export class BodyNormalizationError extends Error {
   constructor(message: string) {
@@ -15,9 +15,58 @@ function isValidBase64(value: string): boolean {
   return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
 }
 
+function isTextualContentType(contentType: string | null | undefined): boolean {
+  if (contentType === null || contentType === undefined) {
+    return false;
+  }
+
+  const essence = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
+
+  return (
+    essence.startsWith('text/') ||
+    essence.endsWith('+xml') ||
+    essence === 'application/json' ||
+    essence === 'application/xml' ||
+    essence === 'application/xhtml+xml' ||
+    essence === 'application/javascript' ||
+    essence === 'application/ecmascript'
+  );
+}
+
+function decodeString(
+  raw: string,
+  strategy: BodyDecodeStrategy,
+  contentType: string | null | undefined,
+): Buffer {
+  if (strategy === 'utf8') {
+    return Buffer.from(raw, 'utf8');
+  }
+
+  const trimmed = raw.trim();
+
+  if (strategy === 'base64') {
+    if (!isValidBase64(trimmed)) {
+      throw new BodyNormalizationError('Invalid base64 body string');
+    }
+
+    return Buffer.from(trimmed, 'base64');
+  }
+
+  if (isTextualContentType(contentType)) {
+    return Buffer.from(raw, 'utf8');
+  }
+
+  if (trimmed !== '' && isValidBase64(trimmed)) {
+    return Buffer.from(trimmed, 'base64');
+  }
+
+  return Buffer.from(raw, 'utf8');
+}
+
 export function normalizeBody(
   raw: unknown,
-  strategy: BodyDecodeStrategy = 'base64',
+  strategy: BodyDecodeStrategy = 'auto',
+  contentType?: string | null,
 ): Buffer | null {
   if (raw === null) {
     return null;
@@ -32,17 +81,7 @@ export function normalizeBody(
   }
 
   if (typeof raw === 'string') {
-    if (strategy === 'utf8') {
-      return Buffer.from(raw, 'utf8');
-    }
-
-    const normalized = raw.trim();
-
-    if (!isValidBase64(normalized)) {
-      throw new BodyNormalizationError('Invalid base64 body string');
-    }
-
-    return Buffer.from(normalized, 'base64');
+    return decodeString(raw, strategy, contentType);
   }
 
   throw new BodyNormalizationError(`Unsupported body value: ${typeof raw}`);

@@ -9,10 +9,11 @@ import type { CrawlRun } from '../run/types.js';
 import type { ScopePolicy } from '../url/ScopePolicy.js';
 import { urlHash } from '../url/urlHash.js';
 import { WORKER_POLL_MS } from './constants.js';
+import { parseRetryAfter } from './retryAfter.js';
 import type { ContentProcessor } from './ContentProcessor.js';
 import { classifyResponse } from './ResponseClassifier.js';
 import type { RateLimiter } from './RateLimiter.js';
-import type { RetryPolicy } from './RetryPolicy.js';
+import type { RetryContext, RetryPolicy } from './RetryPolicy.js';
 import { SafetyLimits } from './SafetyLimits.js';
 import type { DiscoveredLink } from './types.js';
 
@@ -196,20 +197,30 @@ async function processTask(deps: WorkerDependencies, task: CrawlUrlTask): Promis
       });
       return;
 
-    case 'rate_limited':
+    case 'rate_limited': {
+      const retryAfterHeader = getHeader(response.headers, 'Retry-After');
+      const retryAfterMs = parseRetryAfter(retryAfterHeader);
+
       deps.rateLimiter.onRateLimited(response.headers);
-      await handleRetryableOutcome(deps, task, {
-        lastError: 'Rate limited',
-        lastErrorType: 'rate_limited',
-        httpStatusCode: response.statusCode,
-      });
+      await handleRetryableOutcome(
+        deps,
+        task,
+        {
+          lastError: 'Rate limited',
+          lastErrorType: 'rate_limited',
+          httpStatusCode: response.statusCode,
+        },
+        retryAfterMs === null ? undefined : { retryAfterMs },
+      );
       deps.logger.info({
         event: 'rate_limited',
         runId: deps.run.id,
         urlId: task.id,
         statusCode: response.statusCode,
+        retryAfterHeader: retryAfterHeader ?? null,
       });
       return;
+    }
 
     case 'server_error':
       await handleRetryableOutcome(deps, task, {
@@ -237,8 +248,9 @@ async function handleRetryableOutcome(
     lastErrorType: string;
     httpStatusCode: number | null;
   },
+  retryContext?: RetryContext,
 ): Promise<void> {
-  const decision = deps.retryPolicy.decide(task, input.lastErrorType);
+  const decision = deps.retryPolicy.decide(task, input.lastErrorType, retryContext);
 
   if (!decision.retry) {
     await deps.frontier.markPermanentFailure(task.id, {

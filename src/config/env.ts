@@ -21,6 +21,15 @@ export interface AppConfig {
     maxRuntimeSeconds: number;
     outputDir: string;
   };
+  retry: {
+    baseDelayMs: number;
+    maxDelayMs: number;
+    jitterRatio: number;
+  };
+  rateLimit: {
+    delayMs: number;
+    defaultPauseMs: number;
+  };
   nodeEnv: string;
 }
 
@@ -39,6 +48,11 @@ const DEFAULTS = {
   maxBytes: 104857600,
   maxRuntimeSeconds: 3600,
   outputDir: 'output',
+  retryBaseDelayMs: 5_000,
+  retryMaxDelayMs: 300_000,
+  retryJitterRatio: 0.25,
+  rateLimitDelayMs: 150,
+  rateLimitDefaultPauseMs: 5_000,
   nodeEnv: 'development',
 } as const;
 
@@ -48,6 +62,22 @@ function readString(env: NodeJS.ProcessEnv, name: string, fallback: string): str
 }
 
 function readNumber(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const rawValue = env[name];
+
+  if (rawValue === undefined || rawValue === '') {
+    return fallback;
+  }
+
+  const value = Number(rawValue);
+
+  if (!Number.isFinite(value)) {
+    throw new Error(`Invalid numeric environment variable ${name}: ${rawValue}`);
+  }
+
+  return value;
+}
+
+function readFloat(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const rawValue = env[name];
 
   if (rawValue === undefined || rawValue === '') {
@@ -82,6 +112,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       maxBytes: readNumber(env, 'MAX_BYTES', DEFAULTS.maxBytes),
       maxRuntimeSeconds: readNumber(env, 'MAX_RUNTIME_SECONDS', DEFAULTS.maxRuntimeSeconds),
       outputDir: readString(env, 'OUTPUT_DIR', DEFAULTS.outputDir),
+    },
+    retry: {
+      baseDelayMs: readNumber(env, 'RETRY_BASE_DELAY_MS', DEFAULTS.retryBaseDelayMs),
+      maxDelayMs: readNumber(env, 'RETRY_MAX_DELAY_MS', DEFAULTS.retryMaxDelayMs),
+      jitterRatio: readFloat(env, 'RETRY_JITTER_RATIO', DEFAULTS.retryJitterRatio),
+    },
+    rateLimit: {
+      delayMs: readNumber(env, 'RATE_LIMIT_DELAY_MS', DEFAULTS.rateLimitDelayMs),
+      defaultPauseMs: readNumber(
+        env,
+        'RATE_LIMIT_DEFAULT_PAUSE_MS',
+        DEFAULTS.rateLimitDefaultPauseMs,
+      ),
     },
     nodeEnv: readString(env, 'NODE_ENV', DEFAULTS.nodeEnv),
   };

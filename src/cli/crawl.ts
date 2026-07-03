@@ -1,9 +1,21 @@
 import { Command, InvalidArgumentError } from 'commander';
 import type { AppConfig } from '../config/env.js';
+import { HttpFetchClient } from '../fetch/HttpFetchClient.js';
+import { MockFetchClient } from '../fetch/MockFetchClient.js';
+import type { FetchClient } from '../fetch/types.js';
+import { CrawlRunService } from '../run/CrawlRunService.js';
+import { RunRepository } from '../run/RunRepository.js';
+import { NoopContentProcessor } from '../worker/ContentProcessor.js';
+import { SimpleRateLimiter } from '../worker/RateLimiter.js';
+import { SimpleRetryPolicy } from '../worker/RetryPolicy.js';
+import { runWorkerPool } from '../worker/WorkerPool.js';
+import { FrontierRepository } from '../frontier/FrontierRepository.js';
 import { createLogger } from '../log/logger.js';
+import { closePool } from '../db/pool.js';
 
 interface CrawlOptions {
-  seed: string;
+  seed?: string;
+  resume?: string;
   concurrency: number;
   maxUrls: number;
   maxDepth: number;
@@ -37,11 +49,38 @@ function parseNonNegativeNumber(value: string): number {
   return parsed;
 }
 
+function parseUuid(value: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new InvalidArgumentError('resume must be a valid UUID run id');
+  }
+
+  return value;
+}
+
+function createFetchClient(config: AppConfig, options: CrawlOptions): FetchClient {
+  if (options.mockFetch) {
+    const mockClient = new MockFetchClient();
+
+    if (options.seed !== undefined) {
+      mockClient.register(options.seed, {
+        statusCode: 200,
+        headers: { 'Content-Type': 'text/html' },
+        body: Buffer.from('<html><body>mock crawl page</body></html>'),
+      });
+    }
+
+    return mockClient;
+  }
+
+  return new HttpFetchClient({ baseUrl: config.fetchApiBaseUrl });
+}
+
 export function registerCrawlCommand(program: Command, config: AppConfig): void {
   program
     .command('crawl')
     .description('Start a crawl from a seed URL')
-    .requiredOption('--seed <url>', 'Seed URL to crawl', parseUrl)
+    .option('--seed <url>', 'Seed URL to crawl', parseUrl)
+    .option('--resume <run-id>', 'Resume an existing crawl run', parseUuid)
     .option(
       '--concurrency <number>',
       'Maximum concurrent fetches',
@@ -73,21 +112,87 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
       config.crawl.maxRuntimeSeconds,
     )
     .option('--output-dir <path>', 'Directory for persisted crawler output', config.crawl.outputDir)
-    .option('--mock-fetch', 'Use mock fetch behavior when later phases add fetching')
-    .action((options: CrawlOptions) => {
+    .option('--mock-fetch', 'Use mock fetch behavior for local development and tests')
+    .action(async (options: CrawlOptions) => {
       const logger = createLogger(config);
 
-      logger.info({
-        event: 'not_implemented',
-        command: 'crawl',
-        seed: options.seed,
-        concurrency: options.concurrency,
-        maxUrls: options.maxUrls,
-        maxDepth: options.maxDepth,
-        maxBytes: options.maxBytes,
-        maxRuntimeSeconds: options.maxRuntimeSeconds,
-        outputDir: options.outputDir,
-        mockFetch: options.mockFetch ?? false,
-      });
+      if (options.seed === undefined && options.resume === undefined) {
+        throw new InvalidArgumentError('Either --seed or --resume is required');
+      }
+
+      if (options.seed !== undefined && options.resume !== undefined) {
+        throw new InvalidArgumentError('Use either --seed or --resume, not both');
+      }
+
+      const runRepository = new RunRepository();
+      const frontierRepository = new FrontierRepository();
+      const crawlRunService = new CrawlRunService(runRepository, frontierRepository);
+
+      try {
+        const run =
+          options.resume !== undefined
+            ? await crawlRunService.resumeRun(options.resume)
+            : await crawlRunService.createRun(options.seed as string, {
+                concurrency: options.concurrency,
+                maxUrls: options.maxUrls,
+                maxDepth: options.maxDepth,
+                maxBytes: options.maxBytes,
+                maxRuntimeSeconds: options.maxRuntimeSeconds,
+              });
+
+        logger.info({
+          event: 'run_started',
+          runId: run.id,
+          seedUrl: run.seedUrl,
+          resumed: options.resume !== undefined,
+          concurrency: options.concurrency,
+          mockFetch: options.mockFetch ?? false,
+          outputDir: options.outputDir,
+        });
+
+        const summary = await runWorkerPool({
+          run,
+          concurrency: options.concurrency,
+          frontier: frontierRepository,
+          runRepository,
+          crawlRunService,
+          fetchClient: createFetchClient(config, options),
+          rateLimiter: new SimpleRateLimiter(),
+          retryPolicy: new SimpleRetryPolicy(),
+          contentProcessor: new NoopContentProcessor(),
+          logger,
+        });
+
+        logger.info({
+          event: 'crawl_summary',
+          runId: summary.runId,
+          finalStatus: summary.finalStatus,
+          statusCounts: summary.statusCounts,
+        });
+
+        console.log(
+          JSON.stringify(
+            {
+              runId: summary.runId,
+              finalStatus: summary.finalStatus,
+              statusCounts: summary.statusCounts,
+            },
+            null,
+            2,
+          ),
+        );
+
+        if (summary.finalStatus === 'failed') {
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        logger.error({
+          event: 'crawl_failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        process.exitCode = 1;
+      } finally {
+        await closePool();
+      }
     });
 }

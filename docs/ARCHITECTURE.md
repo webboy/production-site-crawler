@@ -122,13 +122,14 @@ CREATE TABLE crawl_runs (
   max_bytes           BIGINT,
   max_runtime_seconds INTEGER,
   concurrency         INTEGER NOT NULL DEFAULT 5,
+  output_dir          TEXT NOT NULL DEFAULT 'output',
   total_bytes         BIGINT NOT NULL DEFAULT 0,
   started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at         TIMESTAMPTZ,
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
-Run statuses: `running`, `completed`, `completed_with_failures`, `limit_reached`, `failed`, `cancelled`.
+Run statuses: `running`, `paused`, `completed`, `completed_with_failures`, `limit_reached`, `failed`, `cancelled`.
 
 ### `crawl_urls` (the frontier + per-URL state)
 ```sql
@@ -324,21 +325,25 @@ Hash-based names are filesystem-safe, collision-free, stable per normalized URL,
 
 ## 12. Resumability & termination
 
-**Resume:** the DB is the source of truth. On start, stale `in_progress` rows (older than a threshold, e.g. 10 min) are reset to `queued` **without** consuming a retry attempt (the previous worker may have died before fetching). `done` URLs are never reprocessed.
+**Resume:** the DB is the source of truth for run configuration (`concurrency`, limits, `scope_policy`, `output_dir`). On resume, persisted values are used unless the CLI explicitly overrides selected limits or concurrency; conflicting `--output-dir` values are rejected because `contents.file_path` is relative to the persisted output root.
 
-**Termination (D6):** a worker exits only when all hold: `claimNextUrl` returns null, no `retryable_failed` has a future `next_attempt_at`, and no rows are `in_progress`. Otherwise it sleeps briefly and re-polls. The run is finalized `completed` / `completed_with_failures` / `limit_reached`.
+Resumable run statuses are `running` and `paused`. `limit_reached` is resumable only when the caller provides an explicit increased limit override. Resume sets status back to `running`, clears `finished_at`, and immediately reclaims all `in_progress` rows for that run to `queued` (no stale timeout wait). Stale `in_progress` recovery (e.g. 10 min threshold) remains for crash recovery on runs left active without an intentional resume. `done` URLs are never reprocessed.
+
+**Graceful stop:** SIGINT/SIGTERM request shutdown, workers finish in-flight work, and the run is finalized as `paused` (explicitly resumable). `cancelled` remains a terminal status for future explicit cancel/admin flows.
+
+**Termination (D6):** a worker exits only when all hold: `claimNextUrl` returns null, no `retryable_failed` has a future `next_attempt_at`, and no rows are `in_progress`. Otherwise it sleeps briefly and re-polls. The run is finalized `completed` / `completed_with_failures` / `limit_reached` / `paused`.
 
 ---
 
 ## 13. Safety limits
 
-`max_urls`, `max_depth`, `max_bytes`, `max_runtime_seconds`. On breach: stop claiming, let in-flight work finish, mark the run `limit_reached`, and leave queued URLs in the DB (still resumable).
+`max_urls`, `max_depth`, `max_bytes`, `max_runtime_seconds`. URL, depth, and byte limits are cumulative across pause/resume via persisted DB state. `max_runtime_seconds` is a **per-session** budget: each worker-pool session (new run or resume) starts a fresh runtime timer. On breach: stop claiming, let in-flight work finish, mark the run `limit_reached`, and leave queued URLs in the DB (still resumable with an explicit increased limit override).
 
 ---
 
 ## 14. Observability
 
-Structured `pino` logs with stable event names: `run_started`, `url_claimed`, `fetch_succeeded`, `fetch_failed`, `rate_limited`, `retry_scheduled`, `content_saved`, `links_discovered`, `url_permanent_failed`, `redirect_followed`, `redirect_rejected`, `run_completed`. Plus a `status` command:
+Structured `pino` logs with stable event names: `run_started`, `run_resumed`, `url_claimed`, `fetch_succeeded`, `fetch_failed`, `rate_limited`, `retry_scheduled`, `content_saved`, `links_discovered`, `url_permanent_failed`, `redirect_followed`, `redirect_rejected`, `run_completed`. Plus a `status` command:
 ```bash
 npm run status -- --run-id=<uuid>
 # prints per-status URL counts, per-kind content counts, bytes downloaded
@@ -357,7 +362,7 @@ No dashboard (production extension).
 3. 404 → `permanent_failed`, no retry.
 4. 500,500,200 → `attempt_count=3`, `done`.
 5. 429 + Retry-After → retryable, `next_attempt_at ≈ now+delay`, limiter paused.
-6. Resume: stale `in_progress` reset, `done` untouched, `queued` processed.
+6. Resume: stale or fresh `in_progress` reset, `done` untouched, `queued` processed; paused runs resume with persisted config.
 7. Concurrency: many workers + same URL from many pages → unique constraint holds, one content row.
 
 ---

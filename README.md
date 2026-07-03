@@ -35,6 +35,8 @@ Resume an active run:
 npm run crawl -- --resume=<run-id>
 ```
 
+Resume loads the original run configuration from Postgres (`concurrency`, limits, scope, and `output_dir`). You may explicitly override `--concurrency`, `--max-urls`, `--max-depth`, `--max-bytes`, or `--max-runtime-seconds`; accepted overrides are persisted before workers start. A conflicting explicit `--output-dir` is rejected because stored content paths are relative to the run's persisted output directory. Graceful SIGINT/SIGTERM pauses the run (`paused`) so it can be resumed later; `max-runtime-seconds` applies per session (a resumed run gets a fresh runtime budget).
+
 Useful checks:
 
 ```sh
@@ -87,7 +89,7 @@ Retryable failures use exponential backoff with jitter. `429` parses `Retry-Afte
 
 ## Resumability And Termination
 
-A run can be resumed by ID. Stale `in_progress` rows are recovered to `queued`, `done` rows are not reprocessed, and retry state remains in Postgres. Finalization is based on durable URL statuses, so a crash leaves enough state to inspect or continue.
+A run can be resumed by ID. The database is the source of truth for run configuration on resume. Graceful stop marks the run `paused`; crash recovery and resume immediately reclaim `in_progress` rows to `queued`. `done` rows are not reprocessed, and retry state remains in Postgres. Finalization is based on durable URL statuses, so a crash leaves enough state to inspect or continue.
 
 ## Content Processing
 

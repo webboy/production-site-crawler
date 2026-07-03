@@ -27,14 +27,22 @@ import { runWorkerPool } from '../worker/WorkerPool.js';
 interface CrawlOptions {
   seed?: string;
   resume?: string;
-  concurrency: number;
-  maxUrls: number;
-  maxDepth: number;
-  maxBytes: number;
-  maxRuntimeSeconds: number;
-  outputDir: string;
+  concurrency?: number;
+  maxUrls?: number;
+  maxDepth?: number;
+  maxBytes?: number;
+  maxRuntimeSeconds?: number;
+  outputDir?: string;
   mockFetch?: boolean;
   bodyStrategy?: BodyDecodeStrategy;
+}
+
+function isCliOption(command: Command, optionName: string): boolean {
+  return command.getOptionValueSource(optionName) === 'cli';
+}
+
+function resolveLimit(value: number | undefined, fallback: number): number | null {
+  return value === 0 ? null : (value ?? fallback);
 }
 
 function parseUrl(value: string): string {
@@ -142,7 +150,7 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
       parseBodyStrategy,
       config.fetchBodyStrategy,
     )
-    .action(async (options: CrawlOptions) => {
+    .action(async (options: CrawlOptions, command: Command) => {
       const logger = createLogger(config);
 
       if (options.seed === undefined && options.resume === undefined) {
@@ -158,26 +166,82 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
       const crawlRunService = new CrawlRunService(runRepository, frontierRepository);
 
       try {
-        const run =
-          options.resume !== undefined
-            ? await crawlRunService.resumeRun(options.resume)
-            : await crawlRunService.createRun(options.seed as string, {
-                concurrency: options.concurrency,
-                maxUrls: options.maxUrls,
-                maxDepth: options.maxDepth,
-                maxBytes: options.maxBytes,
-                maxRuntimeSeconds: options.maxRuntimeSeconds,
-              });
+        let run;
+        let resumeResult;
 
-        logger.info({
-          event: 'run_started',
-          runId: run.id,
-          seedUrl: run.seedUrl,
-          resumed: options.resume !== undefined,
-          concurrency: options.concurrency,
-          mockFetch: options.mockFetch ?? false,
-          outputDir: options.outputDir,
-        });
+        if (options.resume !== undefined) {
+          resumeResult = await crawlRunService.resumeRun(options.resume, {
+            overrides: {
+              concurrency: options.concurrency,
+              maxUrls:
+                options.maxUrls === undefined
+                  ? undefined
+                  : resolveLimit(options.maxUrls, config.crawl.maxUrls),
+              maxDepth:
+                options.maxDepth === undefined
+                  ? undefined
+                  : resolveLimit(options.maxDepth, config.crawl.maxDepth),
+              maxBytes:
+                options.maxBytes === undefined
+                  ? undefined
+                  : resolveLimit(options.maxBytes, config.crawl.maxBytes),
+              maxRuntimeSeconds:
+                options.maxRuntimeSeconds === undefined
+                  ? undefined
+                  : resolveLimit(options.maxRuntimeSeconds, config.crawl.maxRuntimeSeconds),
+              outputDir: options.outputDir,
+            },
+            explicit: {
+              concurrency: isCliOption(command, 'concurrency'),
+              maxUrls: isCliOption(command, 'maxUrls'),
+              maxDepth: isCliOption(command, 'maxDepth'),
+              maxBytes: isCliOption(command, 'maxBytes'),
+              maxRuntimeSeconds: isCliOption(command, 'maxRuntimeSeconds'),
+              outputDir: isCliOption(command, 'outputDir'),
+            },
+          });
+          run = resumeResult.run;
+
+          logger.info({
+            event: 'run_resumed',
+            runId: run.id,
+            seedUrl: run.seedUrl,
+            previousStatus: resumeResult.previousStatus,
+            recoveredInProgressCount: resumeResult.recoveredInProgressCount,
+            concurrency: run.concurrency,
+            outputDir: run.outputDir,
+            maxUrls: run.maxUrls,
+            maxDepth: run.maxDepth,
+            maxBytes: run.maxBytes,
+            maxRuntimeSeconds: run.maxRuntimeSeconds,
+            mockFetch: options.mockFetch ?? false,
+          });
+        } else {
+          run = await crawlRunService.createRun(options.seed as string, {
+            concurrency: options.concurrency ?? config.crawl.concurrency,
+            maxUrls: resolveLimit(options.maxUrls, config.crawl.maxUrls),
+            maxDepth: resolveLimit(options.maxDepth, config.crawl.maxDepth),
+            maxBytes: resolveLimit(options.maxBytes, config.crawl.maxBytes),
+            maxRuntimeSeconds: resolveLimit(
+              options.maxRuntimeSeconds,
+              config.crawl.maxRuntimeSeconds,
+            ),
+            outputDir: options.outputDir ?? config.crawl.outputDir,
+          });
+
+          logger.info({
+            event: 'run_started',
+            runId: run.id,
+            seedUrl: run.seedUrl,
+            concurrency: run.concurrency,
+            outputDir: run.outputDir,
+            maxUrls: run.maxUrls,
+            maxDepth: run.maxDepth,
+            maxBytes: run.maxBytes,
+            maxRuntimeSeconds: run.maxRuntimeSeconds,
+            mockFetch: options.mockFetch ?? false,
+          });
+        }
 
         const rateLimiter = new GlobalPauseRateLimiter({
           baseDelayMs: config.rateLimit.delayMs,
@@ -193,13 +257,13 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
             new VideoHandler(),
             new PdfHandler(),
           ]),
-          new OutputStorage(options.outputDir),
+          new OutputStorage(run.outputDir),
           new ContentRepository(),
         );
 
         const summary = await runWorkerPool({
           run,
-          concurrency: options.concurrency,
+          concurrency: run.concurrency,
           frontier: frontierRepository,
           runRepository,
           crawlRunService,

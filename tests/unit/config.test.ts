@@ -18,6 +18,11 @@ describe('loadConfig', () => {
     expect(defaults.crawl.maxBytes).toBe(104857600);
     expect(defaults.crawl.maxRuntimeSeconds).toBe(3600);
     expect(defaults.crawl.outputDir).toBe('output');
+    expect(defaults.retry.baseDelayMs).toBe(5000);
+    expect(defaults.retry.maxDelayMs).toBe(300000);
+    expect(defaults.retry.jitterRatio).toBe(0.25);
+    expect(defaults.rateLimit.delayMs).toBe(150);
+    expect(defaults.rateLimit.defaultPauseMs).toBe(5000);
 
     const overridden = loadConfig({
       PGPORT: '15432',
@@ -26,6 +31,11 @@ describe('loadConfig', () => {
       MAX_DEPTH: '3',
       MAX_BYTES: '4096',
       MAX_RUNTIME_SECONDS: '60',
+      RETRY_BASE_DELAY_MS: '2500',
+      RETRY_MAX_DELAY_MS: '120000',
+      RETRY_JITTER_RATIO: '0.1',
+      RATE_LIMIT_DELAY_MS: '200',
+      RATE_LIMIT_DEFAULT_PAUSE_MS: '3000',
     });
 
     expect(overridden.pg.port).toBe(15432);
@@ -34,6 +44,11 @@ describe('loadConfig', () => {
     expect(overridden.crawl.maxDepth).toBe(3);
     expect(overridden.crawl.maxBytes).toBe(4096);
     expect(overridden.crawl.maxRuntimeSeconds).toBe(60);
+    expect(overridden.retry.baseDelayMs).toBe(2500);
+    expect(overridden.retry.maxDelayMs).toBe(120000);
+    expect(overridden.retry.jitterRatio).toBe(0.1);
+    expect(overridden.rateLimit.delayMs).toBe(200);
+    expect(overridden.rateLimit.defaultPauseMs).toBe(3000);
 
     expect(() => loadConfig({ CONCURRENCY: 'not-a-number' })).toThrow(
       'Invalid numeric environment variable CONCURRENCY',

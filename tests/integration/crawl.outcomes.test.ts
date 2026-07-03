@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
+import { query } from '../../src/db/pool.js';
 import { normalize } from '../../src/url/UrlNormalizer.js';
-import { SimpleRetryPolicy } from '../../src/worker/RetryPolicy.js';
+import { BackoffRetryPolicy, SimpleRetryPolicy } from '../../src/worker/RetryPolicy.js';
 import {
   canReachDatabase,
   cleanupCrawlRun,
@@ -115,11 +116,17 @@ describe.skipIf(!databaseReachable)('crawl fetch outcomes', () => {
     const seedUrl = 'https://example.com/outcome-429';
     const normalizedSeedUrl = normalize(seedUrl);
     const rateLimiter = new TrackingRateLimiter();
+    const startedAt = Date.now();
 
     const { summary, runId } = await runCrawlWithMocks({
       seedUrl,
       rateLimiter,
-      retryPolicy: new SimpleRetryPolicy(10),
+      retryPolicy: new BackoffRetryPolicy({
+        baseDelayMs: 50,
+        maxDelayMs: 10_000,
+        jitterRatio: 0,
+        random: () => 0.5,
+      }),
       mockResponses: {
         [seedUrl]: [
           { statusCode: 429, headers: { 'Retry-After': '1' }, body: null },
@@ -147,10 +154,20 @@ describe.skipIf(!databaseReachable)('crawl fetch outcomes', () => {
         throw new Error('Expected seed URL row');
       }
 
-      await expect(readCrawlUrl(urlId)).resolves.toMatchObject({
-        status: 'done',
-        attempt_count: 1,
-      });
+      const row = await query<{
+        attempt_count: number;
+        next_attempt_at: Date;
+      }>(
+        `
+          SELECT attempt_count, next_attempt_at
+          FROM crawl_urls
+          WHERE id = $1
+        `,
+        [urlId],
+      );
+
+      expect(row.rows[0]?.attempt_count).toBe(1);
+      expect(row.rows[0]?.next_attempt_at.getTime()).toBeGreaterThanOrEqual(startedAt + 1_000);
     } finally {
       await cleanupCrawlRun(runId);
     }

@@ -1,0 +1,52 @@
+#!/usr/bin/env sh
+set -eu
+
+commit_msg_file="${1:-}"
+
+if [ -z "$commit_msg_file" ] || [ ! -f "$commit_msg_file" ]; then
+  echo "commit-msg hook error: commit message file not found." >&2
+  exit 1
+fi
+
+first_line=$(sed -n '1p' "$commit_msg_file")
+
+# Git-generated merge commits and default revert commits are allowed.
+case "$first_line" in
+  Merge\ *) exit 0 ;;
+  Revert*) exit 0 ;;
+esac
+
+conventional_pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._-]*\))?!?: .{1,72}$'
+
+if printf '%s\n' "$first_line" | grep -Eq "$conventional_pattern"; then
+  :
+else
+  echo "Invalid commit message." >&2
+  echo "" >&2
+  echo "Expected Conventional Commits 1.0.0 format:" >&2
+  echo "  <type>[optional scope][optional !]: <description>" >&2
+  echo "" >&2
+  echo "Allowed types:" >&2
+  echo "  feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert" >&2
+  echo "" >&2
+  echo "Examples:" >&2
+  echo "  feat(crawler): add URL queue" >&2
+  echo "  fix(db): prevent duplicate URL claims" >&2
+  echo "  docs: update setup instructions" >&2
+  echo "  chore!: remove deprecated configuration" >&2
+  exit 1
+fi
+
+description=${first_line#*: }
+
+if [ -z "$description" ]; then
+  echo "Invalid commit message: description must not be empty" >&2
+  exit 1
+fi
+
+case "$description" in
+  *\.)
+    echo "Invalid commit message: description must not end with a period" >&2
+    exit 1
+    ;;
+esac

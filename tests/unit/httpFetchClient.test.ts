@@ -29,12 +29,12 @@ describe('HttpFetchClient', () => {
     expect(requestedUrl).toBe('http://mock-api.mock.com/fetch?url=http%3A%2F%2Fx.com%2Fa%3Fb%3D1');
   });
 
-  it('maps a valid envelope and decodes a base64 body', async () => {
+  it('maps plain HTML string envelopes with the default auto body strategy', async () => {
     const fetchImpl: FetchLike = async () =>
       jsonResponse({
         statusCode: 200,
         headers: { 'Content-Type': 'text/html' },
-        body: Buffer.from('<html></html>').toString('base64'),
+        body: '<html>ok</html>',
       });
 
     const client = new HttpFetchClient({ baseUrl: 'http://fetch.test', fetchImpl });
@@ -42,7 +42,29 @@ describe('HttpFetchClient', () => {
     await expect(client.fetchUrl('https://example.com')).resolves.toEqual({
       statusCode: 200,
       headers: { 'Content-Type': 'text/html' },
-      body: Buffer.from('<html></html>'),
+      body: Buffer.from('<html>ok</html>'),
+    });
+  });
+
+  it('decodes binary base64 bodies when base64 strategy is explicit', async () => {
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse({
+        statusCode: 200,
+        headers: { 'Content-Type': 'image/png' },
+        body: pngBytes.toString('base64'),
+      });
+
+    const client = new HttpFetchClient({
+      baseUrl: 'http://fetch.test',
+      fetchImpl,
+      bodyStrategy: 'base64',
+    });
+
+    await expect(client.fetchUrl('https://example.com')).resolves.toEqual({
+      statusCode: 200,
+      headers: { 'Content-Type': 'image/png' },
+      body: pngBytes,
     });
   });
 

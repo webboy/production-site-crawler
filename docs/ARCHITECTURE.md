@@ -98,7 +98,7 @@ flowchart TD
 
 **D7 — Best-effort binary/duration.** `body` is normalized to `Buffer` regardless of transport encoding (string/base64/Buffer) — see D8. Video duration is best-effort (`null` allowed); file size is always stored.
 
-**D8 — Robust `body` decoding.** The Fetch API interface types `body` as `Buffer | null` while the sample shows a string body. Over a JSON transport, binary is almost certainly base64. `FetchClient` normalizes: `Buffer` as-is; base64 string decoded; text kept as bytes for hashing and decoded per content type. This assumption is documented explicitly.
+**D8 — Robust, configurable `body` decoding.** `FetchClient` normalizes every Fetch API body to `Buffer | null` with `auto` as the default strategy. In `auto`, textual `Content-Type`s (`text/*`, JSON, XML, XHTML, JavaScript) decode strings as UTF-8; otherwise strings that strictly look like base64 are decoded as base64; otherwise strings fall back to UTF-8. The strategy can be overridden with `FETCH_BODY_STRATEGY` or `--body-strategy` (`auto | base64 | utf8`). Residual ambiguity is explicit: a string that accidentally is valid base64 with a binary or missing `Content-Type` is decoded as base64, but the override exists for that case.
 
 **No homepage fallback.** A 404 on the seed is a user-selected URL failing, not permission to silently crawl a different URL.
 

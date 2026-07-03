@@ -11,6 +11,7 @@ describe('loadConfig', () => {
     expect(defaults.pg.port).toBe(5432);
     expect(defaults.pg.database).toBe('production_site_crawler');
     expect(defaults.fetchApiBaseUrl).toBe('http://mock-api.mock.com/fetch');
+    expect(defaults.fetchBodyStrategy).toBe('auto');
     expect(defaults.logLevel).toBe('info');
     expect(defaults.crawl.concurrency).toBe(5);
     expect(defaults.crawl.maxUrls).toBe(1000);
@@ -36,6 +37,7 @@ describe('loadConfig', () => {
       RETRY_JITTER_RATIO: '0.1',
       RATE_LIMIT_DELAY_MS: '200',
       RATE_LIMIT_DEFAULT_PAUSE_MS: '3000',
+      FETCH_BODY_STRATEGY: 'base64',
     });
 
     expect(overridden.pg.port).toBe(15432);
@@ -49,9 +51,13 @@ describe('loadConfig', () => {
     expect(overridden.retry.jitterRatio).toBe(0.1);
     expect(overridden.rateLimit.delayMs).toBe(200);
     expect(overridden.rateLimit.defaultPauseMs).toBe(3000);
+    expect(overridden.fetchBodyStrategy).toBe('base64');
 
     expect(() => loadConfig({ CONCURRENCY: 'not-a-number' })).toThrow(
       'Invalid numeric environment variable CONCURRENCY',
+    );
+    expect(() => loadConfig({ FETCH_BODY_STRATEGY: 'xml' })).toThrow(
+      'Invalid FETCH_BODY_STRATEGY: xml (expected auto | base64 | utf8)',
     );
   });
 });

@@ -2,6 +2,10 @@ import type { Pool } from 'pg';
 import { getPool } from '../db/pool.js';
 import type { MetadataStatus } from './ContentHandler.js';
 
+export type ContentKindCounts = Record<'html' | 'image' | 'video' | 'pdf', number>;
+
+const CONTENT_KINDS = ['html', 'image', 'video', 'pdf'] as const;
+
 export interface CreateContentInput {
   crawlUrlId: string;
   crawlRunId: string;
@@ -52,5 +56,25 @@ export class ContentRepository {
         input.metadataError ?? null,
       ],
     );
+  }
+
+  async countByKind(crawlRunId: string): Promise<ContentKindCounts> {
+    const counts = Object.fromEntries(CONTENT_KINDS.map((kind) => [kind, 0])) as ContentKindCounts;
+
+    const result = await this.pool.query<{ kind: keyof ContentKindCounts; count: string }>(
+      `
+        SELECT kind, count(*)::text AS count
+        FROM contents
+        WHERE crawl_run_id = $1
+        GROUP BY kind
+      `,
+      [crawlRunId],
+    );
+
+    for (const row of result.rows) {
+      counts[row.kind] = Number(row.count);
+    }
+
+    return counts;
   }
 }

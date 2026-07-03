@@ -160,7 +160,7 @@ CREATE UNIQUE INDEX crawl_urls_dedup
 CREATE INDEX crawl_urls_claim
   ON crawl_urls (crawl_run_id, status, next_attempt_at, created_at);
 ```
-URL statuses: `queued`, `in_progress`, `done`, `retryable_failed`, `permanent_failed`, `blocked`, `skipped_unsupported`. Out-of-scope URLs are not stored here — they are recorded only as edges (below).
+URL statuses: `queued`, `in_progress`, `done`, `retryable_failed`, `permanent_failed`, `blocked`, `skipped_unsupported`, `redirected`. Out-of-scope URLs are not stored here — they are recorded only as edges (below).
 
 ### `contents`
 ```sql
@@ -244,12 +244,16 @@ The unique index makes "process at most once" a database guarantee, safe under c
 | 403 | no retry (default) | `blocked` |
 | 429 | respect `Retry-After`, global pause, retry | `retryable_failed` |
 | 500 / network error | backoff retry | `retryable_failed` |
+| 301/302/303/307/308 + `Location` | resolve, scope-check, enqueue in-scope target at same depth, record edge | source `redirected`; target `queued`/`done` |
+| 301/302/303/307/308 without `Location` | no retry | `permanent_failed` (`redirect_missing_location`) |
 
 ### Headers (case-insensitive)
 `Content-Type` → handler; `Content-Length` → sanity-check vs body length; `Retry-After` → 429 scheduling (parses both delta-seconds and HTTP-date); `ETag` → stored for future conditional fetch; `Location` → relevant only if a 3xx appears (see below).
 
 ### Redirects
-The defined status set has no 3xx. Generic `3xx` is handled if observed: when `statusCode` is in [300,400) with `Location` present, the target is normalized, scope-checked, followed up to a bounded depth, and recorded as an edge.
+When the Fetch API returns 301, 302, 303, 307, or 308 with a `Location` header, the worker resolves the target relative to the fetched URL, normalizes it, and scope-checks it. In-scope targets are enqueued at the **same crawl depth** as the source URL with an incremented `redirect_count`; out-of-scope targets are recorded only as `url_edges` with `source: redirect`. The source URL becomes `redirected` (not retried). Missing `Location` becomes `permanent_failed`. Redirect chains are bounded by `MAX_REDIRECTS` (10); exceeding the limit becomes `permanent_failed` with `redirect_limit_exceeded`. Duplicate targets rely on the existing unique index on `(crawl_run_id, normalized_url)`.
+
+If the external Fetch API follows redirects internally and only returns final 200 envelopes, this path is dormant in production but remains covered by mock/integration tests.
 
 ---
 
@@ -334,7 +338,7 @@ Hash-based names are filesystem-safe, collision-free, stable per normalized URL,
 
 ## 14. Observability
 
-Structured `pino` logs with stable event names: `run_started`, `url_claimed`, `fetch_succeeded`, `fetch_failed`, `rate_limited`, `retry_scheduled`, `content_saved`, `links_discovered`, `url_permanent_failed`, `run_completed`. Plus a `status` command:
+Structured `pino` logs with stable event names: `run_started`, `url_claimed`, `fetch_succeeded`, `fetch_failed`, `rate_limited`, `retry_scheduled`, `content_saved`, `links_discovered`, `url_permanent_failed`, `redirect_followed`, `redirect_rejected`, `run_completed`. Plus a `status` command:
 ```bash
 npm run status -- --run-id=<uuid>
 # prints per-status URL counts, per-kind content counts, bytes downloaded

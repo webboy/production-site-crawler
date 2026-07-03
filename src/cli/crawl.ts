@@ -17,6 +17,8 @@ import { createLogger } from '../log/logger.js';
 import { CrawlRunService } from '../run/CrawlRunService.js';
 import { RunRepository } from '../run/RunRepository.js';
 import { OutputStorage } from '../storage/OutputStorage.js';
+import { formatStatusText } from '../status/formatStatus.js';
+import { StatusService } from '../status/StatusService.js';
 import { GlobalPauseRateLimiter } from '../worker/RateLimiter.js';
 import { BackoffRetryPolicy } from '../worker/RetryPolicy.js';
 import { runWorkerPool } from '../worker/WorkerPool.js';
@@ -194,24 +196,24 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
           logger,
         });
 
+        const statusService = new StatusService(
+          runRepository,
+          frontierRepository,
+          new ContentRepository(),
+        );
+        const report = await statusService.getReport(summary.runId);
+
         logger.info({
           event: 'crawl_summary',
           runId: summary.runId,
           finalStatus: summary.finalStatus,
           statusCounts: summary.statusCounts,
+          bytesDownloaded: report?.bytesDownloaded ?? run.totalBytes,
         });
 
-        console.log(
-          JSON.stringify(
-            {
-              runId: summary.runId,
-              finalStatus: summary.finalStatus,
-              statusCounts: summary.statusCounts,
-            },
-            null,
-            2,
-          ),
-        );
+        if (report !== null) {
+          console.log(formatStatusText(report));
+        }
 
         if (summary.finalStatus === 'failed') {
           process.exitCode = 1;

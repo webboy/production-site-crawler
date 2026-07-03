@@ -68,6 +68,7 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
     runId: options.run.id,
     finalStatus: finalizeResult.finalStatus,
     statusCounts: finalizeResult.statusCounts,
+    bytesDownloaded: options.run.totalBytes,
     shutdownRequested: control.getShutdownRequested(),
     limitReached: control.getLimitReached(),
   });

@@ -7,9 +7,10 @@ import type { CrawlUrlTask } from '../frontier/types.js';
 import type { RunRepository } from '../run/RunRepository.js';
 import type { CrawlRun } from '../run/types.js';
 import type { ScopePolicy } from '../url/ScopePolicy.js';
+import { normalizeDiscovered } from '../url/UrlNormalizer.js';
 import { urlHash } from '../url/urlHash.js';
 import type { EdgeRepository } from '../content/EdgeRepository.js';
-import { WORKER_POLL_MS } from './constants.js';
+import { WORKER_POLL_MS, MAX_REDIRECTS } from './constants.js';
 import { parseRetryAfter } from './retryAfter.js';
 import type { ContentProcessor } from './ContentProcessor.js';
 import { classifyResponse } from './ResponseClassifier.js';
@@ -248,6 +249,10 @@ async function processTask(deps: WorkerDependencies, task: CrawlUrlTask): Promis
       });
       return;
 
+    case 'redirect':
+      await handleRedirect(deps, task, response);
+      return;
+
     case 'unexpected':
       await handleRetryableOutcome(deps, task, {
         lastError: `Unexpected HTTP status ${response.statusCode}`,
@@ -306,6 +311,111 @@ async function handleRetryableOutcome(
     urlId: task.id,
     lastError: input.lastError,
     lastErrorType: input.lastErrorType,
+  });
+}
+
+async function handleRedirect(
+  deps: WorkerDependencies,
+  task: CrawlUrlTask,
+  response: { statusCode: number; headers: Record<string, string> },
+): Promise<void> {
+  const location = getHeader(response.headers, 'Location');
+
+  if (location === undefined || location.trim() === '') {
+    await deps.frontier.markPermanentFailure(task.id, {
+      httpStatusCode: response.statusCode,
+      lastError: 'Redirect response missing Location header',
+      lastErrorType: 'redirect_missing_location',
+    });
+
+    deps.logger.info({
+      event: 'redirect_rejected',
+      runId: deps.run.id,
+      urlId: task.id,
+      statusCode: response.statusCode,
+      reason: 'missing_location',
+    });
+
+    return;
+  }
+
+  if (task.redirectCount >= MAX_REDIRECTS) {
+    await deps.frontier.markPermanentFailure(task.id, {
+      httpStatusCode: response.statusCode,
+      lastError: 'Redirect chain limit exceeded',
+      lastErrorType: 'redirect_limit_exceeded',
+    });
+
+    deps.logger.info({
+      event: 'redirect_rejected',
+      runId: deps.run.id,
+      urlId: task.id,
+      statusCode: response.statusCode,
+      reason: 'limit_exceeded',
+      redirectCount: task.redirectCount,
+    });
+
+    return;
+  }
+
+  const normalized = normalizeDiscovered(location, task.url);
+
+  if ('rejected' in normalized) {
+    await deps.frontier.markRedirected(task.id, { httpStatusCode: response.statusCode });
+
+    deps.logger.info({
+      event: 'redirect_rejected',
+      runId: deps.run.id,
+      urlId: task.id,
+      statusCode: response.statusCode,
+      reason: normalized.rejected,
+      location,
+    });
+
+    return;
+  }
+
+  const inScopeByPolicy = deps.scopePolicy.isInScope(normalized.normalizedUrl);
+  const withinDepth = deps.run.maxDepth === null || task.depth <= deps.run.maxDepth;
+  const shouldEnqueue = inScopeByPolicy && withinDepth;
+
+  let toUrlId: string | null = null;
+
+  if (shouldEnqueue) {
+    const enqueueResult = await deps.frontier.enqueueUrl({
+      crawlRunId: deps.run.id,
+      url: normalized.url,
+      normalizedUrl: normalized.normalizedUrl,
+      urlHash: urlHash(normalized.normalizedUrl),
+      host: new URL(normalized.normalizedUrl).hostname,
+      depth: task.depth,
+      redirectCount: task.redirectCount + 1,
+      discoveredFromUrlId: task.id,
+    });
+
+    toUrlId = enqueueResult.id;
+  }
+
+  await deps.edgeRepository.recordEdge({
+    crawlRunId: deps.run.id,
+    fromUrlId: task.id,
+    toUrlId,
+    discoveredUrl: normalized.url,
+    normalizedDiscoveredUrl: normalized.normalizedUrl,
+    inScope: shouldEnqueue,
+    source: 'redirect',
+  });
+
+  await deps.frontier.markRedirected(task.id, { httpStatusCode: response.statusCode });
+
+  deps.logger.info({
+    event: 'redirect_followed',
+    runId: deps.run.id,
+    urlId: task.id,
+    statusCode: response.statusCode,
+    location: normalized.url,
+    targetUrlId: toUrlId,
+    inScope: shouldEnqueue,
   });
 }
 

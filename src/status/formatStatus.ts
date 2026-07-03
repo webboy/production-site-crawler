@@ -21,6 +21,7 @@ const URL_STATUS_ORDER = [
   'permanent_failed',
   'blocked',
   'skipped_unsupported',
+  'redirected',
 ] as const;
 
 const CONTENT_KIND_ORDER = ['html', 'image', 'video', 'pdf'] as const;

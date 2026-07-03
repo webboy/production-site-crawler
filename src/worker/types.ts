@@ -8,6 +8,7 @@ export type ResponseAction =
   | 'blocked'
   | 'rate_limited'
   | 'server_error'
+  | 'redirect'
   | 'unexpected';
 
 export interface DiscoveredLink {

@@ -6,8 +6,8 @@ import type { FetchClient } from '../fetch/types.js';
 import { CrawlRunService } from '../run/CrawlRunService.js';
 import { RunRepository } from '../run/RunRepository.js';
 import { NoopContentProcessor } from '../worker/ContentProcessor.js';
-import { SimpleRateLimiter } from '../worker/RateLimiter.js';
-import { SimpleRetryPolicy } from '../worker/RetryPolicy.js';
+import { GlobalPauseRateLimiter } from '../worker/RateLimiter.js';
+import { BackoffRetryPolicy } from '../worker/RetryPolicy.js';
 import { runWorkerPool } from '../worker/WorkerPool.js';
 import { FrontierRepository } from '../frontier/FrontierRepository.js';
 import { createLogger } from '../log/logger.js';
@@ -150,6 +150,12 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
           outputDir: options.outputDir,
         });
 
+        const rateLimiter = new GlobalPauseRateLimiter({
+          baseDelayMs: config.rateLimit.delayMs,
+          defaultPauseMs: config.rateLimit.defaultPauseMs,
+          logger,
+        });
+
         const summary = await runWorkerPool({
           run,
           concurrency: options.concurrency,
@@ -157,8 +163,12 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
           runRepository,
           crawlRunService,
           fetchClient: createFetchClient(config, options),
-          rateLimiter: new SimpleRateLimiter(),
-          retryPolicy: new SimpleRetryPolicy(),
+          rateLimiter,
+          retryPolicy: new BackoffRetryPolicy({
+            baseDelayMs: config.retry.baseDelayMs,
+            maxDelayMs: config.retry.maxDelayMs,
+            jitterRatio: config.retry.jitterRatio,
+          }),
           contentProcessor: new NoopContentProcessor(),
           logger,
         });

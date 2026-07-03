@@ -8,6 +8,9 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:coverage": "vitest run --coverage",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/cli/index.ts",
@@ -19,8 +22,7 @@
     "migrate": "node --import dotenv/config ./node_modules/.bin/node-pg-migrate --dir migrations",
     "migrate:up": "npm run migrate -- up",
     "migrate:down": "npm run migrate -- down",
-    "migrate:create": "npm run migrate -- create",
-    "test:integration": "vitest run tests/integration"
+    "migrate:create": "npm run migrate -- create"
   },
   "repository": {
     "type": "git",
@@ -49,6 +51,7 @@
   "devDependencies": {
     "@types/node": "^26.1.0",
     "@types/pg": "^8.20.0",
+    "@vitest/coverage-v8": "^4.1.9",
     "eslint": "^10.6.0",
     "prettier": "^3.9.4",
     "tsx": "^4.23.0",

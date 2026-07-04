@@ -398,6 +398,8 @@ No dashboard (production extension).
 
 **Unit:** URL normalizer (fragment, ports, trailing slash, scheme, query sort, relative resolve); scope policy (same registrable domain, subdomain per policy, rejected schemes); retry policy (404/403 no-retry, 429 Retry-After, 500 backoff, max attempts, jitter bounds); content-type classifier; file-path strategy; HTML link extraction + count.
 
+Vitest uses named projects: `unit` runs in parallel, while `integration` runs files serially (`fileParallelism: false`, one fork) against the shared PostgreSQL database. Each Node process caps its `pg.Pool` with `PG_POOL_MAX`; when unset, test runs default to `2` connections per process and non-test runs default to `10`. Integration files must close the per-process pool in `afterAll` via the shared DB teardown helper and clean up created runs after each test.
+
 **Integration (MockFetchClient):**
 1. Simple crawl (HTML → HTML + image), no duplicates.
 2. Same URL discovered from two pages → one `crawl_urls` row, one content, two edges.
@@ -406,6 +408,8 @@ No dashboard (production extension).
 5. 429 + Retry-After → retryable, `next_attempt_at ≈ now+delay`, limiter paused.
 6. Resume: stale or fresh `in_progress` reset, `done` untouched, `queued` processed; paused runs resume with persisted config.
 7. Concurrency: many workers + same URL from many pages → unique constraint holds, one content row.
+
+F25 flake investigation: a 10-run local baseline produced one failed run. The failures were assertion flakes in `content.processing.test.ts` (`records two edges but one contents row...`) and `crawl.redirects.test.ts` (`bounds an endless self-redirect loop...`), both classified as timing/idle-detection races where finalization could observe the frontier before newly admitted or requeued work reached its final outcome. No `too many clients` or connection-termination errors appeared in that baseline; a concurrent `pg_stat_activity` sample during a full run peaked at 15 active connections before serialization/pool caps. No test retry is configured; stabilization is via bounded DB concurrency and deterministic worker quiescence.
 
 ---
 

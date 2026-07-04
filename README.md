@@ -68,7 +68,9 @@ flowchart LR
 npm run typecheck
 npm run lint
 npm test
+npm run test:unit
+npm run test:integration
 npm run test:coverage
 ```
 
-CI runs the same checks with a Postgres service container on Node 20 and 22.
+CI runs the same checks with a Postgres service container on Node 20 and 22. Vitest is split into `unit` and `integration` projects: unit files run in parallel, while integration files run serially against the shared database. `PG_POOL_MAX` caps PostgreSQL connections per Node process; test runs default to a low cap when it is unset.

@@ -33,6 +33,7 @@ interface CrawlOptions {
   maxBytes?: number | null;
   maxRuntimeSeconds?: number | null;
   outputDir?: string;
+  staleAfterMs?: number;
   mockFetch?: boolean;
   bodyStrategy?: BodyDecodeStrategy;
 }
@@ -90,6 +91,16 @@ export function parseConcurrency(value: string): number {
 
   if (!Number.isFinite(parsed) || parsed < 1) {
     throw new InvalidArgumentError('concurrency must be at least 1');
+  }
+
+  return parsed;
+}
+
+export function parseStaleAfterMs(value: string): number {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new InvalidArgumentError('stale-after-ms must be at least 1');
   }
 
   return parsed;
@@ -195,6 +206,12 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
       config.crawl.maxRuntimeSeconds,
     )
     .option('--output-dir <path>', 'Directory for persisted crawler output', config.crawl.outputDir)
+    .option(
+      '--stale-after-ms <number>',
+      'Resume a running run only when updated_at is older than this many milliseconds (crash recovery)',
+      parseStaleAfterMs,
+      config.crawl.staleAfterMs,
+    )
     .option('--mock-fetch', 'Use mock fetch behavior for local development and tests')
     .option(
       '--body-strategy <strategy>',
@@ -241,6 +258,7 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
               maxRuntimeSeconds: isCliOption(command, 'maxRuntimeSeconds'),
               outputDir: isCliOption(command, 'outputDir'),
             },
+            staleAfterMs: options.staleAfterMs ?? config.crawl.staleAfterMs,
           });
           run = resumeResult.run;
 

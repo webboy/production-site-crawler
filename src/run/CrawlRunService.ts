@@ -38,6 +38,7 @@ export interface ResumeRunExplicitFlags {
 export interface ResumeRunOptions {
   overrides?: ResumeRunOverrides;
   explicit?: ResumeRunExplicitFlags;
+  staleAfterMs?: number;
 }
 
 export interface ResumeRunResult {
@@ -178,9 +179,7 @@ export class CrawlRunService {
       throw new Error(`Run is terminal: ${run.status}`);
     }
 
-    if (run.status === 'running') {
-      throw new Error('Run is already running or not resumable');
-    }
+    const isStaleRunningTakeover = run.status === 'running';
 
     if (run.status === 'limit_reached') {
       if (!hasExplicitLimitIncrease(run, overrides, explicit)) {
@@ -188,7 +187,7 @@ export class CrawlRunService {
           'Run reached a limit; resume requires an explicit increased limit override',
         );
       }
-    } else if (!isResumableRunStatus(run.status)) {
+    } else if (!isStaleRunningTakeover && !isResumableRunStatus(run.status)) {
       throw new Error(`Run is not resumable: ${run.status}`);
     }
 
@@ -234,10 +233,31 @@ export class CrawlRunService {
       configUpdates.maxRuntimeSeconds = overrides.maxRuntimeSeconds;
     }
 
-    const resumedRun = await this.runRepository.markRunning(runId, configUpdates, [previousStatus]);
+    if (
+      isStaleRunningTakeover &&
+      (options.staleAfterMs === undefined || options.staleAfterMs < 1)
+    ) {
+      throw new Error('staleAfterMs must be at least 1');
+    }
+
+    const staleBefore =
+      isStaleRunningTakeover && options.staleAfterMs !== undefined
+        ? new Date(Date.now() - options.staleAfterMs)
+        : undefined;
+
+    const resumedRun = await this.runRepository.markRunning(
+      runId,
+      configUpdates,
+      isStaleRunningTakeover ? ['running'] : [previousStatus],
+      staleBefore,
+    );
 
     if (resumedRun === null) {
-      throw new Error('Run is already running or not resumable');
+      throw new Error(
+        isStaleRunningTakeover
+          ? 'Run is already running or not stale enough to resume'
+          : 'Run is already running or not resumable',
+      );
     }
 
     const recoveredInProgressCount = await this.frontierRepository.recoverAllInProgress(runId);

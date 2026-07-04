@@ -23,6 +23,7 @@ export interface AppConfig {
     maxBytes: number;
     maxRuntimeSeconds: number;
     outputDir: string;
+    staleAfterMs: number;
   };
   retry: {
     baseDelayMs: number;
@@ -53,6 +54,7 @@ const DEFAULTS = {
   maxBytes: 104857600,
   maxRuntimeSeconds: 3600,
   outputDir: 'output',
+  runStaleAfterMs: 900_000,
   retryBaseDelayMs: 5_000,
   retryMaxDelayMs: 300_000,
   retryJitterRatio: 0.25,
@@ -145,6 +147,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     'PG_POOL_MAX',
     nodeEnv === 'test' ? DEFAULTS.testPgPoolMax : DEFAULTS.pgPoolMax,
   );
+  const staleAfterMs = readNumber(env, 'RUN_STALE_AFTER_MS', DEFAULTS.runStaleAfterMs);
 
   if (concurrency < 1) {
     throw new Error('CONCURRENCY must be at least 1');
@@ -152,6 +155,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   if (pgPoolMax < 1) {
     throw new Error('PG_POOL_MAX must be at least 1');
+  }
+
+  if (staleAfterMs < 1) {
+    throw new Error('RUN_STALE_AFTER_MS must be at least 1');
   }
 
   return {
@@ -174,6 +181,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       maxBytes: readNumber(env, 'MAX_BYTES', DEFAULTS.maxBytes),
       maxRuntimeSeconds: readNumber(env, 'MAX_RUNTIME_SECONDS', DEFAULTS.maxRuntimeSeconds),
       outputDir: readString(env, 'OUTPUT_DIR', DEFAULTS.outputDir),
+      staleAfterMs,
     },
     retry: {
       baseDelayMs: readNumber(env, 'RETRY_BASE_DELAY_MS', DEFAULTS.retryBaseDelayMs),

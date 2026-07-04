@@ -130,6 +130,7 @@ export class RunRepository {
     id: string,
     updates: UpdateRunConfigInput = {},
     allowedStatuses?: CrawlRunStatus[],
+    staleBefore?: Date,
   ): Promise<CrawlRun | null> {
     const setClauses = ["status = 'running'", 'finished_at = NULL'];
     const values: unknown[] = [id];
@@ -161,15 +162,26 @@ export class RunRepository {
 
     setClauses.push('updated_at = now()');
 
+    const whereClauses = ['id = $1'];
+
+    if (allowedStatuses !== undefined) {
+      values.push(allowedStatuses);
+      whereClauses.push(`status = ANY($${values.length})`);
+    }
+
+    if (staleBefore !== undefined) {
+      values.push(staleBefore);
+      whereClauses.push(`updated_at < $${values.length}`);
+    }
+
     const result = await this.pool.query<CrawlRunRow>(
       `
         UPDATE crawl_runs
         SET ${setClauses.join(',\n            ')}
-        WHERE id = $1
-          ${allowedStatuses === undefined ? '' : `AND status = ANY($${values.length + 1})`}
+        WHERE ${whereClauses.join('\n          AND ')}
         RETURNING ${CRAWL_RUN_COLUMNS}
       `,
-      allowedStatuses === undefined ? values : [...values, allowedStatuses],
+      values,
     );
 
     const row = result.rows[0];

@@ -373,7 +373,7 @@ Resumable run statuses are `running`, `paused`, and `failed`. `failed` represent
 
 ## 13a. Worker resilience
 
-Task-level isolation wraps the full post-claim lifecycle; processing errors classify as retryable (default) or permanent and always attempt a URL outcome via bounded outcome-mark retries. The worker pool uses `Promise.allSettled` so one worker exit does not fail-fast siblings. Core-loop DB operations retry with exponential backoff (5 consecutive failures → worker exit). `finalizeRun` always runs in a `finally` block; infra failure finalizes as `failed`. `concurrency` must be ≥ 1.
+Task-level isolation wraps the full post-claim lifecycle; processing errors classify as retryable (default) or permanent and always attempt a URL outcome via bounded outcome-mark retries. The worker pool uses `Promise.allSettled` so one worker exit does not fail-fast siblings. Core-loop DB operations retry with exponential backoff (5 consecutive failures → worker exit). Run finalization is a guaranteed side-effect in a `finally` block (`finalizeRun`, with a last-resort `finish('failed')` fallback); return values and error handling live outside `finally` so a thrown pool error is logged with its root cause, treated as infra failure, and never swallowed by control flow in `finally`. Infra failure finalizes as `failed`. `concurrency` must be ≥ 1.
 
 ---
 

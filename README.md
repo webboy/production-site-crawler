@@ -28,7 +28,7 @@ Real Fetch API crawl (`FETCH_API_BASE_URL` in `.env`):
 npm run crawl -- --seed=https://www.ridelogger.com/en --concurrency=5 --output-dir=output
 ```
 
-Resume a paused or interrupted run:
+Resume a paused, failed, or crash-stuck run:
 
 ```sh
 npm run crawl -- --resume=<run-id>
@@ -36,7 +36,7 @@ npm run crawl -- --resume=<run-id>
 
 Resume loads persisted run config from Postgres. You may override selected limits or `--concurrency`; conflicting `--output-dir` is rejected. SIGINT/SIGTERM pauses the run (`paused`). `--body-strategy` / `FETCH_BODY_STRATEGY` control Fetch API body decoding (`auto` default).
 
-Limits can be set with CLI flags or env defaults. `--max-urls 0`, `--max-urls unlimited`, `--max-urls none`, `MAX_URLS=0`, and an empty `MAX_URLS` all mean no URL cap. `--max-depth 0` still means seed-only. Runs in `paused` or `failed` can be resumed; `limit_reached` requires an explicit increased limit override, and a concurrent resume of an already `running` run is rejected.
+Limits can be set with CLI flags or env defaults. `--max-urls 0`, `--max-urls unlimited`, `--max-urls none`, `MAX_URLS=0`, and an empty `MAX_URLS` all mean no URL cap. `--max-depth 0` still means seed-only. Runs in `paused` or `failed` can be resumed; `limit_reached` requires an explicit increased limit override. A concurrent resume of a live `running` run is rejected. If a process died without finalizing (hard crash), the run may stay `running`; resume then uses stale takeover when `updated_at` is older than `RUN_STALE_AFTER_MS` (default 15 minutes) or `--stale-after-ms`.
 
 Rate limiting uses baseline pacing plus a global pause for shared Fetch API throttling. `RATE_LIMIT_DELAY_MS` delays each worker loop, `RATE_LIMIT_DEFAULT_PAUSE_MS` is used when a 429 response has no `Retry-After`, and a present `Retry-After` pauses all workers until it elapses.
 

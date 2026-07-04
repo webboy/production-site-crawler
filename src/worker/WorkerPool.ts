@@ -1,7 +1,7 @@
 import type { Logger } from 'pino';
 import type { FetchClient } from '../fetch/types.js';
 import type { FrontierRepository } from '../frontier/FrontierRepository.js';
-import type { CrawlRunService } from '../run/CrawlRunService.js';
+import type { CrawlRunService, FinalizeRunResult } from '../run/CrawlRunService.js';
 import type { RunRepository } from '../run/RunRepository.js';
 import type { CrawlRun } from '../run/types.js';
 import { ScopePolicy } from '../url/ScopePolicy.js';
@@ -41,12 +41,14 @@ export interface WorkerPoolOptions {
   pollMs?: number;
   registerSignalHandlers?: boolean;
   control?: WorkerControl;
+  workerRunner?: typeof runWorkerPoolWorkers;
 }
 
 export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerPoolSummary> {
   const control = options.control ?? createWorkerControl();
   const sessionStartedAtMs = Date.now();
   const scopePolicy = new ScopePolicy(options.run.normalizedSeedUrl, options.run.scopePolicy);
+  const workerRunner = options.workerRunner ?? runWorkerPoolWorkers;
 
   const handleShutdown = (): void => {
     options.logger.info({ event: 'shutdown_requested', runId: options.run.id });
@@ -59,9 +61,11 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
   }
 
   let poolFailure = false;
+  let finalizeResult: FinalizeRunResult | undefined;
+  let finalizeFailed = false;
 
   try {
-    const results = await runWorkerPoolWorkers({
+    const results = await workerRunner({
       run: options.run,
       concurrency: options.concurrency,
       sessionStartedAtMs,
@@ -79,9 +83,14 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
     });
 
     poolFailure = results.hadInfraFailure || results.hadWorkerCrash;
+  } catch (error) {
+    poolFailure = true;
+    options.logger.error({
+      event: 'worker_crashed',
+      runId: options.run.id,
+      cause: error instanceof Error ? error.message : String(error),
+    });
   } finally {
-    let finalizeResult;
-
     try {
       finalizeResult = await options.crawlRunService.finalizeRun(options.run.id, {
         limitReached: control.getLimitReached(),
@@ -89,6 +98,7 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
         infraFailure: poolFailure,
       });
     } catch (error) {
+      finalizeFailed = true;
       options.logger.error({
         event: 'run_failed',
         runId: options.run.id,
@@ -101,34 +111,36 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
       } catch {
         // Last-resort finalize also failed.
       }
-
-      return {
-        runId: options.run.id,
-        finalStatus: 'failed',
-        statusCounts: emptyStatusCounts(),
-        shutdownRequested: control.getShutdownRequested(),
-        limitReached: control.getLimitReached(),
-      };
     }
+  }
 
-    const eventName = finalizeResult.finalStatus === 'failed' ? 'run_failed' : 'run_completed';
-
-    options.logger.info({
-      event: eventName,
-      runId: options.run.id,
-      finalStatus: finalizeResult.finalStatus,
-      statusCounts: finalizeResult.statusCounts,
-      bytesDownloaded: options.run.totalBytes,
-      shutdownRequested: control.getShutdownRequested(),
-      limitReached: control.getLimitReached(),
-    });
-
+  if (finalizeFailed) {
     return {
       runId: options.run.id,
-      finalStatus: finalizeResult.finalStatus,
-      statusCounts: finalizeResult.statusCounts,
+      finalStatus: 'failed',
+      statusCounts: emptyStatusCounts(),
       shutdownRequested: control.getShutdownRequested(),
       limitReached: control.getLimitReached(),
     };
   }
+
+  const eventName = finalizeResult!.finalStatus === 'failed' ? 'run_failed' : 'run_completed';
+
+  options.logger.info({
+    event: eventName,
+    runId: options.run.id,
+    finalStatus: finalizeResult!.finalStatus,
+    statusCounts: finalizeResult!.statusCounts,
+    bytesDownloaded: options.run.totalBytes,
+    shutdownRequested: control.getShutdownRequested(),
+    limitReached: control.getLimitReached(),
+  });
+
+  return {
+    runId: options.run.id,
+    finalStatus: finalizeResult!.finalStatus,
+    statusCounts: finalizeResult!.statusCounts,
+    shutdownRequested: control.getShutdownRequested(),
+    limitReached: control.getLimitReached(),
+  };
 }

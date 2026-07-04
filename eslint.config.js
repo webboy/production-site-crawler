@@ -8,6 +8,7 @@ export default tseslint.config(
   {
     files: ['**/*.ts'],
     rules: {
+      'no-unsafe-finally': 'error',
       '@typescript-eslint/no-unused-vars': [
         'warn',
         {

@@ -412,6 +412,154 @@ describe.skipIf(!databaseReachable)('crawl resume', () => {
     }
   });
 
+  it('rejects fresh running resume and does not recover in_progress rows', async () => {
+    const runId = await insertCrawlRun();
+    const url = 'https://example.com/fresh-running-resume';
+    const normalized = normalize(url);
+
+    if (normalized === null) {
+      throw new Error('Expected normalized fresh running resume URL');
+    }
+
+    await query(
+      `
+        INSERT INTO crawl_urls (
+          crawl_run_id, url, normalized_url, url_hash, host, depth, status, claimed_at
+        )
+        VALUES ($1, $2, $3, $4, 'example.com', 0, 'in_progress', now())
+      `,
+      [runId, url, normalized, urlHash(normalized)],
+    );
+
+    await updateCrawlRun(runId, { status: 'running' });
+
+    const runRepository = new RunRepository();
+    const frontierRepository = new TrackingFrontierRepository();
+    const crawlRunService = new CrawlRunService(runRepository, frontierRepository);
+
+    try {
+      await expect(
+        crawlRunService.resumeRun(runId, { staleAfterMs: 15 * 60 * 1000 }),
+      ).rejects.toThrow(/not stale enough to resume/);
+      expect(frontierRepository.recoveredAllInProgressCount).toBe(0);
+      await expect(readCrawlRun(runId)).resolves.toMatchObject({ status: 'running' });
+
+      const urlRow = await query<{ status: string }>(
+        `
+          SELECT status
+          FROM crawl_urls
+          WHERE crawl_run_id = $1
+            AND normalized_url = $2
+        `,
+        [runId, normalized],
+      );
+      expect(urlRow.rows[0]?.status).toBe('in_progress');
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
+  it('resumes stale running runs via atomic takeover and recovers in_progress once', async () => {
+    const runId = await insertCrawlRun();
+    const url = 'https://example.com/stale-running-resume';
+    const normalized = normalize(url);
+
+    if (normalized === null) {
+      throw new Error('Expected normalized stale running resume URL');
+    }
+
+    await query(
+      `
+        INSERT INTO crawl_urls (
+          crawl_run_id, url, normalized_url, url_hash, host, depth, status, claimed_at
+        )
+        VALUES ($1, $2, $3, $4, 'example.com', 0, 'in_progress', now() - interval '20 minutes')
+      `,
+      [runId, url, normalized, urlHash(normalized)],
+    );
+
+    await updateCrawlRun(runId, {
+      status: 'running',
+      updatedAtOffsetMs: 20 * 60 * 1000,
+    });
+
+    const runRepository = new RunRepository();
+    const frontierRepository = new TrackingFrontierRepository();
+    const crawlRunService = new CrawlRunService(runRepository, frontierRepository);
+
+    try {
+      const resumed = await crawlRunService.resumeRun(runId, { staleAfterMs: 15 * 60 * 1000 });
+
+      expect(resumed.previousStatus).toBe('running');
+      expect(resumed.run.status).toBe('running');
+      expect(frontierRepository.recoveredAllInProgressCount).toBe(1);
+
+      const urlRow = await query<{ status: string }>(
+        `
+          SELECT status
+          FROM crawl_urls
+          WHERE crawl_run_id = $1
+            AND normalized_url = $2
+        `,
+        [runId, normalized],
+      );
+      expect(urlRow.rows[0]?.status).toBe('queued');
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
+  it('rejects parallel stale running resume after one caller atomically claims the run', async () => {
+    const runId = await insertCrawlRun();
+    const url = 'https://example.com/stale-concurrent-resume';
+    const normalized = normalize(url);
+
+    if (normalized === null) {
+      throw new Error('Expected normalized stale concurrent resume URL');
+    }
+
+    await query(
+      `
+        INSERT INTO crawl_urls (
+          crawl_run_id, url, normalized_url, url_hash, host, depth, status, claimed_at
+        )
+        VALUES ($1, $2, $3, $4, 'example.com', 0, 'in_progress', now() - interval '20 minutes')
+      `,
+      [runId, url, normalized, urlHash(normalized)],
+    );
+
+    await updateCrawlRun(runId, {
+      status: 'running',
+      updatedAtOffsetMs: 20 * 60 * 1000,
+    });
+
+    const runRepository = new RunRepository();
+    const frontierRepository = new TrackingFrontierRepository();
+    const crawlRunService = new CrawlRunService(runRepository, frontierRepository);
+    const staleAfterMs = 15 * 60 * 1000;
+
+    try {
+      const results = await Promise.allSettled([
+        crawlRunService.resumeRun(runId, { staleAfterMs }),
+        crawlRunService.resumeRun(runId, { staleAfterMs }),
+      ]);
+
+      const fulfilled = results.filter((result) => result.status === 'fulfilled');
+      const rejected = results.filter((result) => result.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]).toMatchObject({
+        reason: expect.objectContaining({
+          message: 'Run is already running or not stale enough to resume',
+        }),
+      });
+      expect(frontierRepository.recoveredAllInProgressCount).toBe(1);
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
   it('rejects parallel resume after one caller atomically claims the run', async () => {
     const runId = await insertCrawlRun();
     const url = 'https://example.com/concurrent-resume';
@@ -450,7 +598,9 @@ describe.skipIf(!databaseReachable)('crawl resume', () => {
       expect(rejected).toHaveLength(1);
       expect(rejected[0]).toMatchObject({
         reason: expect.objectContaining({
-          message: 'Run is already running or not resumable',
+          message: expect.stringMatching(
+            /Run is already running or not resumable|not stale enough to resume/,
+          ),
         }),
       });
       expect(frontierRepository.recoveredAllInProgressCount).toBe(1);

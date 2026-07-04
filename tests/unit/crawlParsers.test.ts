@@ -4,6 +4,7 @@ import {
   parseConcurrency,
   parseMaxDepth,
   parseMaxUrls,
+  parseStaleAfterMs,
   parseUnlimitedOrPositive,
 } from '../../src/cli/crawl.js';
 
@@ -14,6 +15,12 @@ describe('crawl CLI parsers', () => {
 
   it('accepts positive concurrency', () => {
     expect(parseConcurrency('3')).toBe(3);
+  });
+
+  it('accepts positive stale-after-ms and rejects invalid values', () => {
+    expect(parseStaleAfterMs('900000')).toBe(900_000);
+    expect(() => parseStaleAfterMs('0')).toThrow(InvalidArgumentError);
+    expect(() => parseStaleAfterMs('abc')).toThrow(InvalidArgumentError);
   });
 
   it('maps max URL unlimited sentinels and zero to null', () => {

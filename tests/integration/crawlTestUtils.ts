@@ -49,6 +49,7 @@ export interface RunCrawlWithMocksOptions {
     maxRuntimeSeconds?: boolean;
     outputDir?: boolean;
   };
+  resumeStaleAfterMs?: number;
   control?: WorkerControl;
   pollMs?: number;
   maxUrls?: number | null;
@@ -117,6 +118,7 @@ export async function runCrawlWithMocks(
           await crawlRunService.resumeRun(options.resumeRunId, {
             overrides: options.resumeOverrides,
             explicit: options.resumeExplicit,
+            staleAfterMs: options.resumeStaleAfterMs ?? config.crawl.staleAfterMs,
           })
         ).run
       : await crawlRunService.createRun(options.seedUrl, {
@@ -239,6 +241,7 @@ export async function updateCrawlRun(
   updates: {
     status?: string;
     startedAtOffsetMs?: number;
+    updatedAtOffsetMs?: number;
     maxRuntimeSeconds?: number | null;
     maxUrls?: number | null;
     maxDepth?: number | null;
@@ -259,6 +262,11 @@ export async function updateCrawlRun(
   if (updates.startedAtOffsetMs !== undefined) {
     sets.push(`started_at = now() - ($${paramIndex++} * interval '1 millisecond')`);
     values.push(updates.startedAtOffsetMs);
+  }
+
+  if (updates.updatedAtOffsetMs !== undefined) {
+    sets.push(`updated_at = now() - ($${paramIndex++} * interval '1 millisecond')`);
+    values.push(updates.updatedAtOffsetMs);
   }
 
   if (updates.maxRuntimeSeconds !== undefined) {
@@ -298,8 +306,7 @@ export async function updateCrawlRun(
   await query(
     `
       UPDATE crawl_runs
-      SET ${sets.join(', ')},
-          updated_at = now()
+      SET ${sets.join(', ')}${updates.updatedAtOffsetMs === undefined ? ',\n          updated_at = now()' : ''}
       WHERE id = $1
     `,
     values,

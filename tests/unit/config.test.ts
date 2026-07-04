@@ -23,6 +23,7 @@ describe('loadConfig', () => {
     expect(defaults.crawl.maxBytes).toBe(104857600);
     expect(defaults.crawl.maxRuntimeSeconds).toBe(3600);
     expect(defaults.crawl.outputDir).toBe('output');
+    expect(defaults.crawl.staleAfterMs).toBe(900_000);
     expect(defaults.retry.baseDelayMs).toBe(5000);
     expect(defaults.retry.maxDelayMs).toBe(300000);
     expect(defaults.retry.jitterRatio).toBe(0.25);
@@ -43,6 +44,7 @@ describe('loadConfig', () => {
       RATE_LIMIT_DELAY_MS: '200',
       RATE_LIMIT_DEFAULT_PAUSE_MS: '3000',
       FETCH_BODY_STRATEGY: 'base64',
+      RUN_STALE_AFTER_MS: '60000',
     });
 
     expect(overridden.pg.port).toBe(15432);
@@ -58,11 +60,15 @@ describe('loadConfig', () => {
     expect(overridden.rateLimit.delayMs).toBe(200);
     expect(overridden.rateLimit.defaultPauseMs).toBe(3000);
     expect(overridden.fetchBodyStrategy).toBe('base64');
+    expect(overridden.crawl.staleAfterMs).toBe(60_000);
 
     expect(() => loadConfig({ CONCURRENCY: 'not-a-number' })).toThrow(
       'Invalid numeric environment variable CONCURRENCY',
     );
     expect(() => loadConfig({ PG_POOL_MAX: '0' })).toThrow('PG_POOL_MAX must be at least 1');
+    expect(() => loadConfig({ RUN_STALE_AFTER_MS: '0' })).toThrow(
+      'RUN_STALE_AFTER_MS must be at least 1',
+    );
     expect(() => loadConfig({ MAX_URLS: '-1' })).toThrow(
       'MAX_URLS must be >= 1, or 0/empty for unlimited',
     );

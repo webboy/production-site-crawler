@@ -204,4 +204,16 @@ export class RunRepository {
       [id, bytes],
     );
   }
+
+  async touchHeartbeat(id: string): Promise<void> {
+    await this.pool.query(
+      `
+        UPDATE crawl_runs
+        SET updated_at = now()
+        WHERE id = $1
+          AND status = 'running'
+      `,
+      [id],
+    );
+  }
 }

@@ -8,10 +8,29 @@ import { ScopePolicy } from '../url/ScopePolicy.js';
 import type { ContentProcessor } from './ContentProcessor.js';
 import type { RateLimiter } from './RateLimiter.js';
 import type { RetryPolicy } from './RetryPolicy.js';
+import { RUN_HEARTBEAT_INTERVAL_MS } from './constants.js';
 import { createWorkerControl, runWorkerPoolWorkers, type WorkerControl } from './worker.js';
 import type { EdgeRepository } from '../content/EdgeRepository.js';
 import type { StatusCounts } from '../frontier/types.js';
 import type { WorkerPoolSummary } from './types.js';
+
+function startRunHeartbeat(options: WorkerPoolOptions): () => void {
+  const intervalMs = options.heartbeatIntervalMs ?? RUN_HEARTBEAT_INTERVAL_MS;
+
+  const timer = setInterval(() => {
+    void options.runRepository.touchHeartbeat(options.run.id).catch((error) => {
+      options.logger.warn({
+        event: 'run_heartbeat_failed',
+        runId: options.run.id,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, intervalMs);
+
+  return () => {
+    clearInterval(timer);
+  };
+}
 
 function emptyStatusCounts(): StatusCounts {
   return {
@@ -39,6 +58,7 @@ export interface WorkerPoolOptions {
   edgeRepository: EdgeRepository;
   logger: Logger;
   pollMs?: number;
+  heartbeatIntervalMs?: number;
   registerSignalHandlers?: boolean;
   control?: WorkerControl;
   workerRunner?: typeof runWorkerPoolWorkers;
@@ -63,8 +83,11 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
   let poolFailure = false;
   let finalizeResult: FinalizeRunResult | undefined;
   let finalizeFailed = false;
+  let stopHeartbeat = (): void => {};
 
   try {
+    stopHeartbeat = startRunHeartbeat(options);
+
     const results = await workerRunner({
       run: options.run,
       concurrency: options.concurrency,
@@ -91,6 +114,8 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
       cause: error instanceof Error ? error.message : String(error),
     });
   } finally {
+    stopHeartbeat();
+
     try {
       finalizeResult = await options.crawlRunService.finalizeRun(options.run.id, {
         limitReached: control.getLimitReached(),

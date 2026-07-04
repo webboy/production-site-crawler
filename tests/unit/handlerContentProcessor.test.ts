@@ -1,3 +1,4 @@
+import pino from 'pino';
 import { describe, expect, it } from 'vitest';
 import type { CreateContentInput } from '../../src/content/ContentRepository.js';
 import { HandlerContentProcessor } from '../../src/content/HandlerContentProcessor.js';
@@ -26,6 +27,21 @@ class StubContentRepository {
   async create(input: CreateContentInput): Promise<void> {
     this.created.push(input);
   }
+}
+
+function createLogCapture() {
+  const entries: unknown[] = [];
+  const logger = pino({
+    level: 'info',
+    hooks: {
+      logMethod(inputArgs, method) {
+        entries.push(inputArgs[0]);
+        method.apply(this, inputArgs);
+      },
+    },
+  });
+
+  return { logger, entries };
 }
 
 describe('HandlerContentProcessor', () => {
@@ -102,6 +118,40 @@ describe('HandlerContentProcessor', () => {
       etag: '"abc"',
       metadataStatus: 'ok',
     });
+  });
+
+  it('emits content_saved after persisting supported content', async () => {
+    const storage = new StubStorage();
+    const repository = new StubContentRepository();
+    const { logger, entries } = createLogCapture();
+    const processor = new HandlerContentProcessor(
+      new HandlerRegistry([new HtmlHandler()]),
+      storage as OutputStorage,
+      repository as never,
+      logger,
+    );
+
+    await processor.process(task, {
+      statusCode: 200,
+      headers: { 'Content-Type': 'text/html' },
+      body: Buffer.from('<html><head><title>T</title></head><body></body></html>'),
+    });
+
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: 'content_saved',
+          runId: task.crawlRunId,
+          urlId: task.id,
+          url: task.url,
+          kind: 'html',
+          contentType: 'text/html',
+          filePath: '/tmp/deadbeef.html',
+          byteSize: expect.any(Number),
+          contentHash: expect.any(String),
+        }),
+      ]),
+    );
   });
 
   it('records failed metadata when handler extraction throws', async () => {

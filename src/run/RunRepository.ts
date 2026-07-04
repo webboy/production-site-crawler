@@ -23,6 +23,7 @@ const CRAWL_RUN_COLUMNS = `
   concurrency,
   output_dir,
   total_bytes,
+  urls_enqueued,
   started_at,
   finished_at,
   updated_at

@@ -16,6 +16,12 @@ async function canReachDatabase(): Promise<boolean> {
 
 export default async function globalSetup(): Promise<void> {
   if (!(await canReachDatabase())) {
+    if (process.env.CI === 'true') {
+      throw new Error(
+        'Integration database is unreachable in CI. Ensure the Postgres service is configured.',
+      );
+    }
+
     process.env.INTEGRATION_DATABASE_REACHABLE = '0';
     return;
   }

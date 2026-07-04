@@ -166,7 +166,7 @@ describe.skipIf(!databaseReachable)('crawl fetch outcomes', () => {
         [urlId],
       );
 
-      expect(row.rows[0]?.attempt_count).toBe(1);
+      expect(row.rows[0]?.attempt_count).toBe(0);
       expect(row.rows[0]?.next_attempt_at.getTime()).toBeGreaterThanOrEqual(startedAt + 1_000);
     } finally {
       await cleanupCrawlRun(runId);

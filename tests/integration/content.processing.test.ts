@@ -151,9 +151,10 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
         in_scope: boolean;
         to_url_id: string | null;
         normalized_discovered_url: string | null;
+        skip_reason: string | null;
       }>(
         `
-          SELECT in_scope, to_url_id, normalized_discovered_url
+          SELECT in_scope, to_url_id, normalized_discovered_url, skip_reason
           FROM url_edges
           WHERE crawl_run_id = $1
         `,
@@ -173,7 +174,11 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
       const externalEdge = edges.rows.find((row) =>
         row.normalized_discovered_url?.includes('other.example.org'),
       );
-      expect(externalEdge).toMatchObject({ in_scope: false, to_url_id: null });
+      expect(externalEdge).toMatchObject({
+        in_scope: false,
+        to_url_id: null,
+        skip_reason: 'scope',
+      });
 
       const childHtmlUrlId = await getUrlIdByNormalizedUrl(runId, childHtmlNormalized);
       const imageUrlId = await getUrlIdByNormalizedUrl(runId, imageNormalized);

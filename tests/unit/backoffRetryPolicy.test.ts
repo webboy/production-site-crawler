@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { CrawlUrlTask } from '../../src/frontier/types.js';
-import { BackoffRetryPolicy } from '../../src/worker/RetryPolicy.js';
+import {
+  BackoffRetryPolicy,
+  consumesAttemptForReason,
+} from '../../src/worker/RetryPolicy.js';
 
 function createTask(attemptCount: number, maxAttempts = 5): CrawlUrlTask {
   return {
@@ -11,6 +14,7 @@ function createTask(attemptCount: number, maxAttempts = 5): CrawlUrlTask {
     urlHash: 'hash',
     host: 'example.com',
     depth: 0,
+    redirectCount: 0,
     status: 'retryable_failed',
     httpStatusCode: 500,
     contentType: null,
@@ -30,13 +34,16 @@ function createTask(attemptCount: number, maxAttempts = 5): CrawlUrlTask {
 describe('BackoffRetryPolicy', () => {
   const now = new Date('2026-07-03T12:00:00.000Z');
 
-  it('returns retry false when attempt count reaches max attempts', () => {
+  it('returns retry false when the next attempt would exhaust max attempts', () => {
     const policy = new BackoffRetryPolicy({
       now: () => now,
       random: () => 0.5,
     });
 
-    expect(policy.decide(createTask(5), 'server_error').retry).toBe(false);
+    expect(policy.decide(createTask(4), 'server_error')).toMatchObject({
+      retry: false,
+      consumesAttempt: true,
+    });
   });
 
   it('grows delay exponentially and caps at maxDelayMs', () => {
@@ -76,20 +83,43 @@ describe('BackoffRetryPolicy', () => {
     expect(upperPolicy.computeBackoffMs(0)).toBe(1_250);
   });
 
-  it('uses max(retryAfterMs, backoff) when Retry-After context is provided', () => {
+  it('uses retryAfterMs directly for rate_limited without consuming attempt budget', () => {
     const policy = new BackoffRetryPolicy({
       baseDelayMs: 1_000,
       maxDelayMs: 10_000,
       jitterRatio: 0,
+      rateLimitFallbackMs: 5_000,
       now: () => now,
       random: () => 0.5,
     });
 
     const shortRetryAfter = policy.decide(createTask(0), 'rate_limited', { retryAfterMs: 500 });
-    expect(shortRetryAfter.retry).toBe(true);
-    expect(shortRetryAfter.nextAttemptAt.toISOString()).toBe('2026-07-03T12:00:01.000Z');
+    expect(shortRetryAfter).toMatchObject({
+      retry: true,
+      consumesAttempt: false,
+    });
+    expect(shortRetryAfter.nextAttemptAt.toISOString()).toBe('2026-07-03T12:00:00.500Z');
 
-    const longRetryAfter = policy.decide(createTask(0), 'rate_limited', { retryAfterMs: 5_000 });
-    expect(longRetryAfter.nextAttemptAt.toISOString()).toBe('2026-07-03T12:00:05.000Z');
+    const fallback = policy.decide(createTask(0), 'rate_limited');
+    expect(fallback.nextAttemptAt.toISOString()).toBe('2026-07-03T12:00:05.000Z');
+  });
+
+  it('still retries rate_limited when attempt budget is exhausted', () => {
+    const policy = new BackoffRetryPolicy({
+      now: () => now,
+      random: () => 0.5,
+    });
+
+    expect(policy.decide(createTask(5), 'rate_limited')).toMatchObject({
+      retry: true,
+      consumesAttempt: false,
+    });
+  });
+});
+
+describe('consumesAttemptForReason', () => {
+  it('exempts rate_limited only', () => {
+    expect(consumesAttemptForReason('rate_limited')).toBe(false);
+    expect(consumesAttemptForReason('server_error')).toBe(true);
   });
 });

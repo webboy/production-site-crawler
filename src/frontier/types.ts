@@ -70,8 +70,9 @@ export interface EnqueueUrlInput {
 }
 
 export interface EnqueueUrlResult {
-  id: string;
+  id: string | null;
   inserted: boolean;
+  skippedLimit?: boolean;
 }
 
 export interface MarkSucceededInput {
@@ -84,6 +85,7 @@ export interface MarkRetryableFailureInput {
   lastError: string;
   lastErrorType: string;
   httpStatusCode?: number | null;
+  consumesAttempt?: boolean;
 }
 
 export interface MarkPermanentFailureInput {

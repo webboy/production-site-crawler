@@ -60,52 +60,98 @@ interface StatusCountRow extends QueryResultRow {
   count: string;
 }
 
+interface RunLimitRow extends QueryResultRow {
+  max_urls: number | null;
+  urls_enqueued: number;
+}
+
 export class FrontierRepository {
   constructor(private readonly pool: Pool = getPool()) {}
 
   async enqueueUrl(input: EnqueueUrlInput): Promise<EnqueueUrlResult> {
-    const insertResult = await this.pool.query<{ id: string }>(
-      `
-        INSERT INTO crawl_urls (
-          crawl_run_id,
-          url,
-          normalized_url,
-          url_hash,
-          host,
-          depth,
-          redirect_count,
-          status,
-          discovered_from_url_id
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)
-        ON CONFLICT (crawl_run_id, normalized_url) DO NOTHING
-        RETURNING id
-      `,
-      [
-        input.crawlRunId,
-        input.url,
-        input.normalizedUrl,
-        input.urlHash,
-        input.host,
-        input.depth,
-        input.redirectCount ?? 0,
-        input.discoveredFromUrlId ?? null,
-      ],
-    );
+    return withTransaction(async (client) => {
+      const existingResult = await client.query<{ id: string }>(
+        `
+          SELECT id
+          FROM crawl_urls
+          WHERE crawl_run_id = $1
+            AND normalized_url = $2
+        `,
+        [input.crawlRunId, input.normalizedUrl],
+      );
 
-    const insertedId = insertResult.rows[0]?.id;
+      const existingId = existingResult.rows[0]?.id;
 
-    if (insertedId !== undefined) {
+      if (existingId !== undefined) {
+        return { id: existingId, inserted: false };
+      }
+
+      const runResult = await client.query<RunLimitRow>(
+        `
+          SELECT max_urls, urls_enqueued
+          FROM crawl_runs
+          WHERE id = $1
+          FOR UPDATE
+        `,
+        [input.crawlRunId],
+      );
+
+      const runRow = runResult.rows[0];
+
+      if (runRow === undefined) {
+        throw new Error(`Crawl run not found: ${input.crawlRunId}`);
+      }
+
+      if (runRow.max_urls !== null && runRow.urls_enqueued >= runRow.max_urls) {
+        return { id: null, inserted: false, skippedLimit: true };
+      }
+
+      const insertResult = await client.query<{ id: string }>(
+        `
+          INSERT INTO crawl_urls (
+            crawl_run_id,
+            url,
+            normalized_url,
+            url_hash,
+            host,
+            depth,
+            redirect_count,
+            status,
+            discovered_from_url_id
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)
+          RETURNING id
+        `,
+        [
+          input.crawlRunId,
+          input.url,
+          input.normalizedUrl,
+          input.urlHash,
+          input.host,
+          input.depth,
+          input.redirectCount ?? 0,
+          input.discoveredFromUrlId ?? null,
+        ],
+      );
+
+      const insertedId = insertResult.rows[0]?.id;
+
+      if (insertedId === undefined) {
+        throw new Error('Failed to insert crawl URL');
+      }
+
+      await client.query(
+        `
+          UPDATE crawl_runs
+          SET urls_enqueued = urls_enqueued + 1,
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [input.crawlRunId],
+      );
+
       return { id: insertedId, inserted: true };
-    }
-
-    const existingId = await this.findByNormalizedUrl(input.crawlRunId, input.normalizedUrl);
-
-    if (existingId === null) {
-      throw new Error('Failed to find existing crawl URL after enqueue conflict');
-    }
-
-    return { id: existingId, inserted: false };
+    });
   }
 
   async findByNormalizedUrl(crawlRunId: string, normalizedUrl: string): Promise<string | null> {
@@ -182,12 +228,14 @@ export class FrontierRepository {
   }
 
   async markRetryableFailure(taskId: string, input: MarkRetryableFailureInput): Promise<void> {
+    const consumesAttempt = input.consumesAttempt !== false;
+
     await this.pool.query(
       `
         UPDATE crawl_urls
         SET status = 'retryable_failed',
             http_status_code = $2,
-            attempt_count = attempt_count + 1,
+            attempt_count = CASE WHEN $6 = false THEN attempt_count ELSE attempt_count + 1 END,
             next_attempt_at = $3,
             last_error = $4,
             last_error_type = $5,
@@ -201,6 +249,7 @@ export class FrontierRepository {
         input.nextAttemptAt,
         input.lastError,
         input.lastErrorType,
+        consumesAttempt,
       ],
     );
   }

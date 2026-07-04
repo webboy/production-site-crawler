@@ -3,6 +3,12 @@ import { closePool, query } from '../../src/db/pool.js';
 import { FrontierRepository } from '../../src/frontier/FrontierRepository.js';
 
 export async function canReachDatabase(): Promise<boolean> {
+  if (process.env.CI === 'true' && process.env.INTEGRATION_DATABASE_REACHABLE === '0') {
+    throw new Error(
+      'Integration database is unreachable in CI. Ensure the Postgres service is configured.',
+    );
+  }
+
   if (process.env.INTEGRATION_DATABASE_REACHABLE === '1') {
     return true;
   }

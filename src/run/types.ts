@@ -24,6 +24,7 @@ export interface CrawlRun {
   concurrency: number;
   outputDir: string;
   totalBytes: number;
+  urlsEnqueued: number;
   startedAt: Date;
   finishedAt: Date | null;
   updatedAt: Date;
@@ -43,6 +44,7 @@ export interface CrawlRunRow extends QueryResultRow {
   concurrency: number;
   output_dir: string;
   total_bytes: number;
+  urls_enqueued: number;
   started_at: Date;
   finished_at: Date | null;
   updated_at: Date;
@@ -93,6 +95,7 @@ export function mapCrawlRunRow(row: CrawlRunRow): CrawlRun {
     concurrency: row.concurrency,
     outputDir: row.output_dir,
     totalBytes: Number(row.total_bytes),
+    urlsEnqueued: Number(row.urls_enqueued),
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     updatedAt: row.updated_at,

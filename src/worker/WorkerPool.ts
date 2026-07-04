@@ -10,7 +10,21 @@ import type { RateLimiter } from './RateLimiter.js';
 import type { RetryPolicy } from './RetryPolicy.js';
 import { createWorkerControl, runWorkerPoolWorkers, type WorkerControl } from './worker.js';
 import type { EdgeRepository } from '../content/EdgeRepository.js';
+import type { StatusCounts } from '../frontier/types.js';
 import type { WorkerPoolSummary } from './types.js';
+
+function emptyStatusCounts(): StatusCounts {
+  return {
+    queued: 0,
+    in_progress: 0,
+    done: 0,
+    retryable_failed: 0,
+    permanent_failed: 0,
+    blocked: 0,
+    skipped_unsupported: 0,
+    redirected: 0,
+  };
+}
 
 export interface WorkerPoolOptions {
   run: CrawlRun;
@@ -44,43 +58,77 @@ export async function runWorkerPool(options: WorkerPoolOptions): Promise<WorkerP
     process.once('SIGTERM', handleShutdown);
   }
 
-  await runWorkerPoolWorkers({
-    run: options.run,
-    concurrency: options.concurrency,
-    sessionStartedAtMs,
-    frontier: options.frontier,
-    runRepository: options.runRepository,
-    fetchClient: options.fetchClient,
-    rateLimiter: options.rateLimiter,
-    retryPolicy: options.retryPolicy,
-    contentProcessor: options.contentProcessor,
-    edgeRepository: options.edgeRepository,
-    scopePolicy,
-    logger: options.logger,
-    control,
-    pollMs: options.pollMs,
-  });
+  let poolFailure = false;
 
-  const finalizeResult = await options.crawlRunService.finalizeRun(options.run.id, {
-    limitReached: control.getLimitReached(),
-    shutdownRequested: control.getShutdownRequested(),
-  });
+  try {
+    const results = await runWorkerPoolWorkers({
+      run: options.run,
+      concurrency: options.concurrency,
+      sessionStartedAtMs,
+      frontier: options.frontier,
+      runRepository: options.runRepository,
+      fetchClient: options.fetchClient,
+      rateLimiter: options.rateLimiter,
+      retryPolicy: options.retryPolicy,
+      contentProcessor: options.contentProcessor,
+      edgeRepository: options.edgeRepository,
+      scopePolicy,
+      logger: options.logger,
+      control,
+      pollMs: options.pollMs,
+    });
 
-  options.logger.info({
-    event: 'run_completed',
-    runId: options.run.id,
-    finalStatus: finalizeResult.finalStatus,
-    statusCounts: finalizeResult.statusCounts,
-    bytesDownloaded: options.run.totalBytes,
-    shutdownRequested: control.getShutdownRequested(),
-    limitReached: control.getLimitReached(),
-  });
+    poolFailure = results.hadInfraFailure || results.hadWorkerCrash;
+  } finally {
+    let finalizeResult;
 
-  return {
-    runId: options.run.id,
-    finalStatus: finalizeResult.finalStatus,
-    statusCounts: finalizeResult.statusCounts,
-    shutdownRequested: control.getShutdownRequested(),
-    limitReached: control.getLimitReached(),
-  };
+    try {
+      finalizeResult = await options.crawlRunService.finalizeRun(options.run.id, {
+        limitReached: control.getLimitReached(),
+        shutdownRequested: control.getShutdownRequested(),
+        infraFailure: poolFailure,
+      });
+    } catch (error) {
+      options.logger.error({
+        event: 'run_failed',
+        runId: options.run.id,
+        finalStatus: 'failed',
+        cause: error instanceof Error ? error.message : String(error),
+      });
+
+      try {
+        await options.runRepository.finish(options.run.id, 'failed');
+      } catch {
+        // Last-resort finalize also failed.
+      }
+
+      return {
+        runId: options.run.id,
+        finalStatus: 'failed',
+        statusCounts: emptyStatusCounts(),
+        shutdownRequested: control.getShutdownRequested(),
+        limitReached: control.getLimitReached(),
+      };
+    }
+
+    const eventName = finalizeResult.finalStatus === 'failed' ? 'run_failed' : 'run_completed';
+
+    options.logger.info({
+      event: eventName,
+      runId: options.run.id,
+      finalStatus: finalizeResult.finalStatus,
+      statusCounts: finalizeResult.statusCounts,
+      bytesDownloaded: options.run.totalBytes,
+      shutdownRequested: control.getShutdownRequested(),
+      limitReached: control.getLimitReached(),
+    });
+
+    return {
+      runId: options.run.id,
+      finalStatus: finalizeResult.finalStatus,
+      statusCounts: finalizeResult.statusCounts,
+      shutdownRequested: control.getShutdownRequested(),
+      limitReached: control.getLimitReached(),
+    };
+  }
 }

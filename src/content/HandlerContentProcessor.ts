@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Logger } from 'pino';
 import { getHeader } from '../fetch/headers.js';
 import type { FetchResponse } from '../fetch/types.js';
 import type { CrawlUrlTask } from '../frontier/types.js';
@@ -13,6 +14,7 @@ export class HandlerContentProcessor implements ContentProcessor {
     private readonly registry: HandlerRegistry,
     private readonly storage: OutputStorage,
     private readonly contentRepository: ContentRepository,
+    private readonly logger?: Logger,
   ) {}
 
   async process(task: CrawlUrlTask, response: FetchResponse): Promise<ContentProcessResult> {
@@ -77,6 +79,18 @@ export class HandlerContentProcessor implements ContentProcessor {
       metadata,
       metadataStatus,
       metadataError: metadataError ?? null,
+    });
+
+    this.logger?.info({
+      event: 'content_saved',
+      runId: task.crawlRunId,
+      urlId: task.id,
+      url: task.url,
+      kind: handler.kind,
+      contentType,
+      filePath,
+      byteSize: body.length,
+      contentHash,
     });
 
     return {

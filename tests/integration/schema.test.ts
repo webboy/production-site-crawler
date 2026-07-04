@@ -1,15 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { closePool, query, withTransaction } from '../../src/db/pool.js';
-
-async function canReachDatabase(): Promise<boolean> {
-  try {
-    await query('SELECT 1');
-    return true;
-  } catch {
-    await closePool();
-    return false;
-  }
-}
+import { canReachDatabase } from './frontierTestUtils.js';
 
 const databaseReachable = await canReachDatabase();
 

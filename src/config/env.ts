@@ -111,6 +111,12 @@ function readBodyStrategy(env: NodeJS.ProcessEnv, name: string): BodyDecodeStrat
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const concurrency = readNumber(env, 'CONCURRENCY', DEFAULTS.concurrency);
+
+  if (concurrency < 1) {
+    throw new Error('CONCURRENCY must be at least 1');
+  }
+
   return {
     databaseUrl: readString(env, 'DATABASE_URL', DEFAULTS.databaseUrl),
     pg: {
@@ -124,7 +130,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     fetchBodyStrategy: readBodyStrategy(env, 'FETCH_BODY_STRATEGY'),
     logLevel: readString(env, 'LOG_LEVEL', DEFAULTS.logLevel),
     crawl: {
-      concurrency: readNumber(env, 'CONCURRENCY', DEFAULTS.concurrency),
+      concurrency,
       maxUrls: readNumber(env, 'MAX_URLS', DEFAULTS.maxUrls),
       maxDepth: readNumber(env, 'MAX_DEPTH', DEFAULTS.maxDepth),
       maxBytes: readNumber(env, 'MAX_BYTES', DEFAULTS.maxBytes),

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: production_site_crawler
+          POSTGRES_USER: crawler
+          POSTGRES_PASSWORD: crawler
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crawler -d production_site_crawler"
+          --health-interval 5s
+          --health-retries 10
+
+    env:
+      CI: true
+      DATABASE_URL: postgres://crawler:crawler@localhost:5432/production_site_crawler
+      PGHOST: localhost
+      PGPORT: 5432
+      PGDATABASE: production_site_crawler
+      PGUSER: crawler
+      PGPASSWORD: crawler
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run migrate:up
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:coverage

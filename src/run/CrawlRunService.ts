@@ -49,6 +49,7 @@ export interface ResumeRunResult {
 export interface FinalizeRunContext {
   limitReached?: boolean;
   shutdownRequested?: boolean;
+  infraFailure?: boolean;
 }
 
 export interface FinalizeRunResult {
@@ -107,6 +108,14 @@ export class CrawlRunService {
   ) {}
 
   async createRun(seedUrl: string, options: CreateRunOptions): Promise<CrawlRun> {
+    if (options.concurrency < 1) {
+      throw new Error('concurrency must be at least 1');
+    }
+
+    if (options.maxUrls !== null && options.maxUrls < 1) {
+      throw new Error('maxUrls must be at least 1 when set');
+    }
+
     const normalizedSeedUrl = normalize(seedUrl);
 
     if (normalizedSeedUrl === null) {
@@ -141,6 +150,8 @@ export class CrawlRunService {
       depth: 0,
     });
 
+    run.urlsEnqueued = 1;
+
     return run;
   }
 
@@ -167,6 +178,14 @@ export class CrawlRunService {
       }
     } else if (!isResumableRunStatus(run.status)) {
       throw new Error(`Run is not resumable: ${run.status}`);
+    }
+
+    if (run.concurrency < 1) {
+      throw new Error('Run has invalid concurrency; resume requires an explicit concurrency override');
+    }
+
+    if (explicit.concurrency && overrides.concurrency !== undefined && overrides.concurrency < 1) {
+      throw new Error('concurrency must be at least 1');
     }
 
     if (explicit.outputDir && overrides.outputDir !== undefined && overrides.outputDir !== run.outputDir) {
@@ -205,6 +224,9 @@ export class CrawlRunService {
       finalStatus = 'paused';
     } else if (context.limitReached) {
       finalStatus = 'limit_reached';
+      await this.runRepository.finish(runId, finalStatus);
+    } else if (context.infraFailure) {
+      finalStatus = 'failed';
       await this.runRepository.finish(runId, finalStatus);
     } else if (statusCounts.permanent_failed > 0 || statusCounts.blocked > 0) {
       finalStatus = 'completed_with_failures';

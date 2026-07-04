@@ -37,7 +37,7 @@ seed URL → crawl_run + first queued task
 - Metadata per type (title/link count, dimensions/size, size/duration, pages/title).
 - Clean separation of permanent vs. transient failures (404/403 vs 429/500/network/null-body).
 - Retry with backoff + jitter, `Retry-After` handling, global rate reaction to 429.
-- Resumability after crash/interrupt (stale `in_progress` recovery).
+- Resumability after crash/interrupt (`recoverAllInProgress` on resume; stale recovery helper exists but is not wired into the active crawl path).
 - Safety limits (max URLs/depth/bytes/runtime).
 - Structured logs + `status` command + inspectable DB.
 - Focused unit + integration tests (mock fetch).
@@ -124,6 +124,7 @@ CREATE TABLE crawl_runs (
   concurrency         INTEGER NOT NULL DEFAULT 5,
   output_dir          TEXT NOT NULL DEFAULT 'output',
   total_bytes         BIGINT NOT NULL DEFAULT 0,
+  urls_enqueued       INTEGER NOT NULL DEFAULT 0,   -- admitted in-scope frontier rows
   started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at         TIMESTAMPTZ,
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -150,6 +151,7 @@ CREATE TABLE crawl_urls (
   last_error             TEXT,
   last_error_type        TEXT,
   discovered_from_url_id UUID REFERENCES crawl_urls(id),  -- cheap discovery tree
+  redirect_count         INTEGER NOT NULL DEFAULT 0,
   claimed_at             TIMESTAMPTZ,
   finished_at            TIMESTAMPTZ,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -190,16 +192,22 @@ CREATE TABLE url_edges (
   id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   crawl_run_id              UUID NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
   from_url_id               UUID NOT NULL REFERENCES crawl_urls(id) ON DELETE CASCADE,
-  to_url_id                 UUID REFERENCES crawl_urls(id) ON DELETE CASCADE,  -- null if out-of-scope
+  to_url_id                 UUID REFERENCES crawl_urls(id) ON DELETE CASCADE,  -- null when not enqueued
   discovered_url            TEXT NOT NULL,
-  normalized_discovered_url TEXT,
-  in_scope                  BOOLEAN NOT NULL,
-  source                    TEXT,                   -- a.href | img.src | source.src | ...
-  created_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+  normalized_discovered_url TEXT NOT NULL,
+  in_scope                  BOOLEAN NOT NULL,       -- scope policy only (not depth/limit)
+  skip_reason               TEXT,                   -- null = enqueued; scope | depth | limit
+  source                    TEXT NOT NULL,          -- a.href | img.src | redirect | ...
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT url_edges_skip_reason_check CHECK (
+    skip_reason IS NULL OR skip_reason IN ('scope', 'depth', 'limit')
+  )
 );
+CREATE UNIQUE INDEX url_edges_dedup
+  ON url_edges (crawl_run_id, from_url_id, normalized_discovered_url, source);
 CREATE INDEX url_edges_from ON url_edges (from_url_id);
 ```
-Records discovery relationships and lets out-of-scope links be captured without polluting `crawl_urls`.
+Records discovery relationships and lets out-of-scope or skipped links be captured without polluting `crawl_urls`. `in_scope` reflects ScopePolicy only; `skip_reason` explains why no frontier row was admitted (`scope`, `depth`, `limit`; `NULL` means enqueued). Edge writes are idempotent via upsert on the unique key above.
 
 No `domains` table: one seed → one fixed scope per run, so the host lives as an attribute. A `domains` entity would earn its place only for multi-domain crawling, per-domain politeness, and robots.txt state.
 
@@ -229,7 +237,7 @@ VALUES ($1,$2,$3,$4,$5,$6,'queued',$7)
 ON CONFLICT (crawl_run_id, normalized_url) DO NOTHING
 RETURNING id;
 ```
-The unique index makes "process at most once" a database guarantee, safe under crashes, concurrency, and resume.
+The unique index makes "process at most once" a database guarantee, safe under crashes, concurrency, and resume. Discovery graph writes use the same idempotency pattern: `url_edges` upserts on `(crawl_run_id, from_url_id, normalized_discovered_url, source)`.
 
 ---
 
@@ -243,7 +251,7 @@ The unique index makes "process at most once" a database guarantee, safe under c
 | 200 + unsupported Content-Type | record, skip | `skipped_unsupported` |
 | 404 | no retry | `permanent_failed` |
 | 403 | no retry (default) | `blocked` |
-| 429 | respect `Retry-After`, global pause, retry | `retryable_failed` |
+| 429 | respect `Retry-After`, global pause, retry **without consuming URL attempt budget** | `retryable_failed` |
 | 500 / network error | backoff retry | `retryable_failed` |
 | 301/302/303/307/308 + `Location` | resolve, scope-check, enqueue in-scope target at same depth, record edge | source `redirected`; target `queued`/`done` |
 | 301/302/303/307/308 without `Location` | no retry | `permanent_failed` (`redirect_missing_location`) |
@@ -260,10 +268,12 @@ If the external Fetch API follows redirects internally and only returns final 20
 
 ## 8. Retry & rate limiting
 
+`max_attempts` means **total fetch attempts** (including the first), not "retries after the first". `attempt_count` tracks budget-consuming failed fetches only. Server errors, network/timeout failures, empty bodies, and unexpected statuses consume the budget; **429 does not** (shared API throttling, not a URL property). Stale recovery does not consume an attempt.
+
 ```ts
 const retry = { maxAttempts: 5, baseDelayMs: 5_000, maxDelayMs: 300_000, jitterRatio: 0.25 };
-// delay = min(base * 2^(attempt-1), max);  apply ±jitterRatio
-// 429: prefer Retry-After (seconds or HTTP-date); else backoff; also notify the limiter.
+// Budget-consuming: delay = min(base * 2^attemptCount, max) with ±jitterRatio
+// 429: Retry-After header or 5s fallback (no exponential backoff on attempt_count)
 ```
 RateLimiter: fixed concurrency + a small inter-request delay. On 429 it reads `Retry-After` and **globally pauses** all workers until it elapses, then resumes, because the Fetch API is the shared bottleneck. Token buckets / per-domain / distributed limiting are production extensions.
 
@@ -284,10 +294,10 @@ The registry finds the first handler whose `supports()` matches the normalized `
 |---|---|---|---|
 | HTML (`cheerio`) | raw HTML | `{ title, discoveredLinkCount }` | count = all discovered links; in/out-of-scope split lives in `url_edges`. |
 | Image (`image-size`) | bytes | `{ width, height, fileSize }` | dims fail → save + `partial`. |
-| Video | bytes | `{ fileSize, durationSeconds\|null }` | duration via optional `ffprobe`; null is acceptable. |
+| Video | bytes | `{ fileSize, durationSeconds: null }` | duration is not extracted in MVP; metadata stays `partial` with an explicit error message. |
 | PDF (`pdf-parse`) | bytes | `{ pageCount, title? }` | parse fail → save + `failed`, URL still `done`. |
 
-HTML link sources: `a[href]`, `img[src]`, `video[src]`, `source[src]`, `link[href]`, `object[data]`, `embed[src]`. Only `http`/`https` schemes are followed.
+HTML link sources: `a[href]`, `img[src]`, `img[srcset]`, `video[src]`, `video[poster]`, `source[src]`, `source[srcset]`, `link[href]` (allowlisted `rel` only), `object[data]`, `embed[src]`, `iframe[src]`. Allowed `<link rel>` values: `stylesheet`, `icon`, `shortcut icon`, `apple-touch-icon`, `manifest`, `preload`, `modulepreload`. Connection hints such as `preconnect` and `dns-prefetch` are ignored. Only `http`/`https` schemes are followed.
 
 ---
 
@@ -309,7 +319,9 @@ Normalizer (deterministic dedup key):
 | `https://example.com/en/` | `https://example.com/en` |
 | `https://example.com/p?b=2&a=1` | `https://example.com/p?a=1&b=2` |
 
-ScopePolicy (default `registrable_domain`): allowed iff the candidate's registrable domain (via `tldts`) equals the run's. Unsupported schemes (`mailto`, `tel`, `javascript`, `data`, `ftp`, `file`) are rejected. Out-of-scope links are recorded as `url_edges` with `in_scope=false` and never enqueued.
+ScopePolicy (default `registrable_domain`): allowed iff the candidate's registrable domain (via `tldts`) equals the run's. Unsupported schemes (`mailto`, `tel`, `javascript`, `data`, `ftp`, `file`) are rejected. Out-of-scope links are recorded as `url_edges` with `in_scope=false`, `skip_reason='scope'`, and never enqueued.
+
+**Normalization trade-offs:** the dedup key forces `https` and strips trailing slashes on non-root paths. That can collapse `http`/`https` variants and paths such as `/en/` and `/en` into one frontier row even when a site treats them differently. The resolved fetch URL is still stored separately on `crawl_urls.url`, but dedup semantics follow the canonical key. Changing this later requires a migration because it affects unique indexes and historical rows. `subdomain_allowlist` scope remains deferred in code.
 
 ---
 
@@ -327,7 +339,7 @@ Hash-based names are filesystem-safe, collision-free, stable per normalized URL,
 
 **Resume:** the DB is the source of truth for run configuration (`concurrency`, limits, `scope_policy`, `output_dir`). On resume, persisted values are used unless the CLI explicitly overrides selected limits or concurrency; conflicting `--output-dir` values are rejected because `contents.file_path` is relative to the persisted output root.
 
-Resumable run statuses are `running` and `paused`. `limit_reached` is resumable only when the caller provides an explicit increased limit override. Resume sets status back to `running`, clears `finished_at`, and immediately reclaims all `in_progress` rows for that run to `queued` (no stale timeout wait). Stale `in_progress` recovery (e.g. 10 min threshold) remains for crash recovery on runs left active without an intentional resume. `done` URLs are never reprocessed.
+Resumable run statuses are `running` and `paused`. `limit_reached` is resumable only when the caller provides an explicit increased limit override. Resume sets status back to `running`, clears `finished_at`, and immediately reclaims all `in_progress` rows for that run to `queued`. A stale `in_progress` recovery helper exists for future crash-recovery wiring, but the active resume/crawl path uses immediate full reclaim via `recoverAllInProgress`. `done` URLs are never reprocessed.
 
 **Graceful stop:** SIGINT/SIGTERM request shutdown, workers finish in-flight work, and the run is finalized as `paused` (explicitly resumable). `cancelled` remains a terminal status for future explicit cancel/admin flows.
 
@@ -337,13 +349,34 @@ Resumable run statuses are `running` and `paused`. `limit_reached` is resumable 
 
 ## 13. Safety limits
 
-`max_urls`, `max_depth`, `max_bytes`, `max_runtime_seconds`. URL, depth, and byte limits are cumulative across pause/resume via persisted DB state. `max_runtime_seconds` is a **per-session** budget: each worker-pool session (new run or resume) starts a fresh runtime timer. On breach: stop claiming, let in-flight work finish, mark the run `limit_reached`, and leave queued URLs in the DB (still resumable with an explicit increased limit override).
+`max_urls`, `max_depth`, `max_bytes`, `max_runtime_seconds`.
+
+| Limit | Semantics | Enforcement |
+|---|---|---|
+| `max_urls` | Max in-scope URLs **admitted** to the frontier (incl. seed) | Transactional counter `urls_enqueued` at enqueue time (strict, 0 overshoot) |
+| `max_depth` | Max discovery depth; `0` = seed only | Pre-enqueue check; `null`/`unlimited` = no depth cap |
+| `max_bytes` | Max persisted bytes | Best-effort in-memory check before claim |
+| `max_runtime_seconds` | Per-session runtime budget | Timer before claim |
+
+`null` (or CLI `unlimited`/`none`) means no limit for URLs/bytes/runtime. Only `max_depth=0` treats zero as a meaningful constraint; other limits reject `0`. URL/depth/byte limits are cumulative across pause/resume via persisted DB state. `max_runtime_seconds` is **per-session**: each worker-pool session starts a fresh timer. On breach: stop claiming, let in-flight work finish, mark `limit_reached`, leave queued URLs in the DB (resumable with an explicit increased limit override).
+
+---
+
+## 13a. Worker resilience
+
+Task-level isolation wraps the full post-claim lifecycle; processing errors classify as retryable (default) or permanent and always attempt a URL outcome via bounded outcome-mark retries. The worker pool uses `Promise.allSettled` so one worker exit does not fail-fast siblings. Core-loop DB operations retry with exponential backoff (5 consecutive failures → worker exit). `finalizeRun` always runs in a `finally` block; infra failure finalizes as `failed`. `concurrency` must be ≥ 1.
 
 ---
 
 ## 14. Observability
 
-Structured `pino` logs with stable event names: `run_started`, `run_resumed`, `url_claimed`, `fetch_succeeded`, `fetch_failed`, `rate_limited`, `retry_scheduled`, `content_saved`, `links_discovered`, `url_permanent_failed`, `redirect_followed`, `redirect_rejected`, `run_completed`. Plus a `status` command:
+Structured `pino` logs with stable event names:
+
+`run_started`, `run_resumed`, `run_completed`, `run_failed`, `crawl_summary`, `crawl_failed`, `url_claimed`, `fetch_succeeded`, `fetch_failed`, `content_saved`, `content_length_mismatch`, `links_discovered`, `url_skipped_unsupported`, `url_blocked`, `url_permanent_failed`, `redirect_followed`, `redirect_rejected`, `enqueue_skipped_limit`, `url_limit_reached`, `limit_reached`, `rate_limited`, `rate_limit_retry_scheduled`, `rate_limited_pause`, `retry_scheduled`, `task_processing_failed`, `task_outcome_mark_failed`, `worker_infra_failure`, `worker_crashed`, `shutdown_requested`, `status_requested`, `status_run_not_found`, `db_pool_error`.
+
+`content_saved` is emitted after bytes are persisted and a `contents` row is written. `content_length_mismatch` is a warning-only sanity check when `Content-Length` disagrees with the decoded body size; it does not fail the crawl.
+
+Plus a `status` command:
 ```bash
 npm run status -- --run-id=<uuid>
 # prints per-status URL counts, per-kind content counts, bytes downloaded
@@ -374,13 +407,16 @@ No dashboard (production extension).
 | CLI | `commander` | tiny, clear. |
 | DB | `pg` + hand-written SQL | SQL clarity; no ORM over the frontier queries. |
 | Migrations | `node-pg-migrate` | simple. |
-| Logging | `pino` | structured, fast. |
+| Logging | `pino`, `pino-pretty` (dev) | structured, fast. |
+| Config | `dotenv` | local `.env` loading for CLI/migrations. |
 | HTML | `cheerio` | lightweight, reliable. |
 | Image meta | `image-size` | light, no native build. |
 | PDF meta | `pdf-parse` | pages + title. |
-| Video meta | `ffprobe` (optional) | best-effort duration; null if absent. |
+| Video meta | none (MVP) | bytes saved; duration stays `null`. |
 | Scope | `tldts` | registrable-domain computation (PSL). |
-| Tests | `vitest` | fast. |
+| Tests | `vitest`, `@vitest/coverage-v8` | fast unit/integration coverage. |
+| Build/dev | `typescript`, `tsx` | compile + local TS CLI execution. |
+| Lint/format | `eslint`, `prettier`, `typescript-eslint` | repo hygiene. |
 | Hash | node `crypto` | built in. |
 
 Minimal-dependency rule: every non-trivial dependency is justified; nothing heavy unless a requirement demands it.
@@ -395,8 +431,9 @@ src/
   run/            CrawlRunService.ts, RunRepository.ts
   frontier/       FrontierRepository.ts
   fetch/          FetchClient (types), HttpFetchClient.ts, MockFetchClient.ts
-  worker/         WorkerPool.ts, worker.ts, RetryPolicy.ts, RateLimiter.ts,
-                  ResponseClassifier.ts, ContentProcessor.ts, SafetyLimits.ts
+  worker/         WorkerPool.ts, worker.ts, edgeTarget.ts, RetryPolicy.ts, RateLimiter.ts,
+                  ResponseClassifier.ts, ContentProcessor.ts, SafetyLimits.ts,
+                  classifyProcessingError.ts, outcomeMarkRetry.ts
   content/        HandlerRegistry.ts, ContentHandler.ts, HtmlHandler.ts,
                   ImageHandler.ts, VideoHandler.ts, PdfHandler.ts,
                   HandlerContentProcessor.ts, ContentRepository.ts, EdgeRepository.ts
@@ -423,3 +460,6 @@ Modular, not over-abstracted. Interfaces are introduced only where there is a re
 - Silent homepage fallback when the seed 404s (changes user intent).
 - Treating metadata failure as fetch failure.
 - Exiting workers while HTML parsing is still in flight (termination race).
+- Fail-fast worker pools that abandon siblings on one uncaught error.
+- Unhandled post-fetch exceptions leaving tasks stuck `in_progress`.
+- Zero-concurrency runs that finalize while queued work remains.

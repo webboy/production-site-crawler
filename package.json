@@ -3,8 +3,11 @@
   "version": "1.0.0",
   "description": "A production-oriented TypeScript/Node.js CLI crawler with PostgreSQL-backed crawl state, resumable workers, content processing, and status reporting.",
   "bin": {
-    "production-site-crawler": "src/cli/index.ts"
+    "production-site-crawler": "dist/cli/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "directories": {
     "doc": "docs"
   },
@@ -14,6 +17,7 @@
     "test:integration": "vitest run tests/integration",
     "test:coverage": "vitest run --coverage",
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/cli/index.ts",
     "crawl": "tsx src/cli/index.ts crawl",

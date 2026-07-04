@@ -152,9 +152,13 @@ describe.skipIf(!databaseReachable)('crawl redirect handling', () => {
         throw new Error('Expected seed URL row');
       }
 
-      const edgeResult = await query<{ to_url_id: string | null; in_scope: boolean }>(
+      const edgeResult = await query<{
+        to_url_id: string | null;
+        in_scope: boolean;
+        skip_reason: string | null;
+      }>(
         `
-          SELECT to_url_id, in_scope
+          SELECT to_url_id, in_scope, skip_reason
           FROM url_edges
           WHERE crawl_run_id = $1
             AND from_url_id = $2
@@ -165,6 +169,7 @@ describe.skipIf(!databaseReachable)('crawl redirect handling', () => {
       expect(edgeResult.rows[0]).toMatchObject({
         to_url_id: null,
         in_scope: false,
+        skip_reason: 'scope',
       });
     } finally {
       await cleanupCrawlRun(runId);

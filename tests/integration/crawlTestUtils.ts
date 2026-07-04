@@ -168,6 +168,7 @@ export async function readCrawlRun(runId: string): Promise<CrawlRun | null> {
         concurrency,
         output_dir,
         total_bytes,
+        urls_enqueued,
         started_at,
         finished_at,
         updated_at

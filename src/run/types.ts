@@ -71,7 +71,7 @@ export interface UpdateRunConfigInput {
   maxRuntimeSeconds?: number | null;
 }
 
-const RESUMABLE_STATUSES = new Set<CrawlRunStatus>(['running', 'paused', 'failed']);
+const RESUMABLE_STATUSES = new Set<CrawlRunStatus>(['paused', 'failed']);
 
 const FINAL_STATUSES = new Set<CrawlRunStatus>([
   'completed',
@@ -111,7 +111,5 @@ export function isFinalRunStatus(status: CrawlRunStatus): boolean {
 
 /** @deprecated Use isFinalRunStatus or isResumableRunStatus instead */
 export function isTerminalRunStatus(status: CrawlRunStatus): boolean {
-  return (
-    status !== 'running' && status !== 'paused' && status !== 'failed' && status !== 'limit_reached'
-  );
+  return status !== 'paused' && status !== 'failed' && status !== 'limit_reached';
 }

@@ -18,7 +18,7 @@ export interface AppConfig {
   logLevel: string;
   crawl: {
     concurrency: number;
-    maxUrls: number;
+    maxUrls: number | null;
     maxDepth: number;
     maxBytes: number;
     maxRuntimeSeconds: number;
@@ -83,6 +83,30 @@ function readNumber(env: NodeJS.ProcessEnv, name: string, fallback: number): num
   return value;
 }
 
+function readMaxUrls(env: NodeJS.ProcessEnv): number | null {
+  const rawValue = env.MAX_URLS;
+
+  if (rawValue === undefined) {
+    return DEFAULTS.maxUrls;
+  }
+
+  if (rawValue === '') {
+    return null;
+  }
+
+  const value = Number(rawValue);
+
+  if (!Number.isFinite(value)) {
+    throw new Error(`Invalid numeric environment variable MAX_URLS: ${rawValue}`);
+  }
+
+  if (value < 0) {
+    throw new Error('MAX_URLS must be >= 1, or 0/empty for unlimited');
+  }
+
+  return value === 0 ? null : value;
+}
+
 function readFloat(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const rawValue = env[name];
 
@@ -145,7 +169,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     logLevel: readString(env, 'LOG_LEVEL', DEFAULTS.logLevel),
     crawl: {
       concurrency,
-      maxUrls: readNumber(env, 'MAX_URLS', DEFAULTS.maxUrls),
+      maxUrls: readMaxUrls(env),
       maxDepth: readNumber(env, 'MAX_DEPTH', DEFAULTS.maxDepth),
       maxBytes: readNumber(env, 'MAX_BYTES', DEFAULTS.maxBytes),
       maxRuntimeSeconds: readNumber(env, 'MAX_RUNTIME_SECONDS', DEFAULTS.maxRuntimeSeconds),

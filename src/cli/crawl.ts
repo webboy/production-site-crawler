@@ -57,6 +57,20 @@ export function parseUnlimitedOrPositive(value: string, optionName: string): num
   return parsed;
 }
 
+export function parseMaxUrls(value: string): number | null {
+  if (value === '' || value === '0' || value === 'unlimited' || value === 'none') {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new InvalidArgumentError('max-urls must be >= 1, or 0/unlimited/none for unlimited');
+  }
+
+  return parsed;
+}
+
 export function parseMaxDepth(value: string): number | null {
   if (value === 'unlimited' || value === 'none') {
     return null;
@@ -83,11 +97,11 @@ export function parseConcurrency(value: string): number {
 
 function resolveConfiguredLimit(
   cliValue: number | null | undefined,
-  fallback: number,
+  fallback: number | null,
   parser: (value: string) => number | null,
 ): number | null {
   if (cliValue === undefined) {
-    return parser(String(fallback));
+    return fallback === null ? null : parser(String(fallback));
   }
 
   return cliValue;
@@ -158,8 +172,8 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
     )
     .option(
       '--max-urls <number>',
-      'Maximum URLs to crawl (positive number, unlimited, or none)',
-      parseUnlimitedOrPositive.bind(null, 'max-urls'),
+      'Maximum URLs to crawl (positive number; 0, unlimited, or none for no limit)',
+      parseMaxUrls,
       config.crawl.maxUrls,
     )
     .option(
@@ -171,13 +185,13 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
     .option(
       '--max-bytes <number>',
       'Maximum bytes to persist (positive number, unlimited, or none)',
-      parseUnlimitedOrPositive.bind(null, 'max-bytes'),
+      (value) => parseUnlimitedOrPositive(value, 'max-bytes'),
       config.crawl.maxBytes,
     )
     .option(
       '--max-runtime-seconds <number>',
       'Maximum crawl runtime in seconds (positive number, unlimited, or none)',
-      parseUnlimitedOrPositive.bind(null, 'max-runtime-seconds'),
+      (value) => parseUnlimitedOrPositive(value, 'max-runtime-seconds'),
       config.crawl.maxRuntimeSeconds,
     )
     .option('--output-dir <path>', 'Directory for persisted crawler output', config.crawl.outputDir)
@@ -247,9 +261,7 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
         } else {
           run = await crawlRunService.createRun(options.seed as string, {
             concurrency: options.concurrency ?? config.crawl.concurrency,
-            maxUrls: resolveConfiguredLimit(options.maxUrls, config.crawl.maxUrls, (value) =>
-              parseUnlimitedOrPositive(value, 'max-urls'),
-            ),
+            maxUrls: resolveConfiguredLimit(options.maxUrls, config.crawl.maxUrls, parseMaxUrls),
             maxDepth: resolveConfiguredLimit(
               options.maxDepth,
               config.crawl.maxDepth,

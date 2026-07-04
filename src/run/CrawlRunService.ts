@@ -178,6 +178,10 @@ export class CrawlRunService {
       throw new Error(`Run is terminal: ${run.status}`);
     }
 
+    if (run.status === 'running') {
+      throw new Error('Run is already running or not resumable');
+    }
+
     if (run.status === 'limit_reached') {
       if (!hasExplicitLimitIncrease(run, overrides, explicit)) {
         throw new Error(
@@ -230,9 +234,13 @@ export class CrawlRunService {
       configUpdates.maxRuntimeSeconds = overrides.maxRuntimeSeconds;
     }
 
-    const recoveredInProgressCount = await this.frontierRepository.recoverAllInProgress(runId);
+    const resumedRun = await this.runRepository.markRunning(runId, configUpdates, [previousStatus]);
 
-    const resumedRun = await this.runRepository.markRunning(runId, configUpdates);
+    if (resumedRun === null) {
+      throw new Error('Run is already running or not resumable');
+    }
+
+    const recoveredInProgressCount = await this.frontierRepository.recoverAllInProgress(runId);
 
     return {
       run: resumedRun,

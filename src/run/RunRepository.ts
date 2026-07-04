@@ -126,7 +126,11 @@ export class RunRepository {
     );
   }
 
-  async markRunning(id: string, updates: UpdateRunConfigInput = {}): Promise<CrawlRun> {
+  async markRunning(
+    id: string,
+    updates: UpdateRunConfigInput = {},
+    allowedStatuses?: CrawlRunStatus[],
+  ): Promise<CrawlRun | null> {
     const setClauses = ["status = 'running'", 'finished_at = NULL'];
     const values: unknown[] = [id];
 
@@ -162,15 +166,16 @@ export class RunRepository {
         UPDATE crawl_runs
         SET ${setClauses.join(',\n            ')}
         WHERE id = $1
+          ${allowedStatuses === undefined ? '' : `AND status = ANY($${values.length + 1})`}
         RETURNING ${CRAWL_RUN_COLUMNS}
       `,
-      values,
+      allowedStatuses === undefined ? values : [...values, allowedStatuses],
     );
 
     const row = result.rows[0];
 
     if (row === undefined) {
-      throw new Error(`Failed to mark crawl run ${id} as running`);
+      return null;
     }
 
     return mapCrawlRunRow(row);

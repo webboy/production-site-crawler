@@ -394,14 +394,13 @@ export class FrontierRepository {
     return Number(result.rows[0]?.count ?? 0);
   }
 
-  async countReadyQueued(crawlRunId: string): Promise<number> {
+  async countQueued(crawlRunId: string): Promise<number> {
     const result = await this.pool.query<CountRow>(
       `
         SELECT count(*)::text AS count
         FROM crawl_urls
         WHERE crawl_run_id = $1
-          AND status IN ('queued', 'retryable_failed')
-          AND next_attempt_at <= now()
+          AND status = 'queued'
       `,
       [crawlRunId],
     );

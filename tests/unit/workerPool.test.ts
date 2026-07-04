@@ -1,5 +1,5 @@
 import pino from 'pino';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FinalizeRunContext, FinalizeRunResult } from '../../src/run/CrawlRunService.js';
 import type { CrawlRun } from '../../src/run/types.js';
 import { createWorkerControl } from '../../src/worker/worker.js';
@@ -63,6 +63,8 @@ function createPoolOptions(overrides: {
   workerRunner?: ReturnType<typeof vi.fn>;
   finalizeRun?: ReturnType<typeof vi.fn>;
   finish?: ReturnType<typeof vi.fn>;
+  touchHeartbeat?: ReturnType<typeof vi.fn>;
+  heartbeatIntervalMs?: number;
 }) {
   const finalizeRun =
     overrides.finalizeRun ??
@@ -74,13 +76,14 @@ function createPoolOptions(overrides: {
     );
 
   const finish = overrides.finish ?? vi.fn(async () => undefined);
+  const touchHeartbeat = overrides.touchHeartbeat ?? vi.fn(async () => undefined);
 
   return {
     options: {
       run: overrides.run ?? createRun(),
       concurrency: 1,
       frontier: {} as never,
-      runRepository: { finish } as never,
+      runRepository: { finish, touchHeartbeat } as never,
       crawlRunService: { finalizeRun } as never,
       fetchClient: {} as never,
       rateLimiter: {} as never,
@@ -91,13 +94,19 @@ function createPoolOptions(overrides: {
       registerSignalHandlers: false,
       control: overrides.control,
       workerRunner: overrides.workerRunner,
+      heartbeatIntervalMs: overrides.heartbeatIntervalMs,
     },
     finalizeRun,
     finish,
+    touchHeartbeat,
   };
 }
 
 describe('runWorkerPool', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('returns a completed summary on the happy path', async () => {
     const statusCounts = createStatusCounts();
     const { options, finalizeRun } = createPoolOptions({
@@ -263,5 +272,96 @@ describe('runWorkerPool', () => {
     });
     expect(summary.shutdownRequested).toBe(true);
     expect(summary.limitReached).toBe(true);
+  });
+
+  it('heartbeats the run row while the worker pool is active', async () => {
+    vi.useFakeTimers();
+
+    let resolveRunner: (() => void) | undefined;
+    const runnerBlocked = new Promise<void>((resolve) => {
+      resolveRunner = resolve;
+    });
+
+    const { options, touchHeartbeat } = createPoolOptions({
+      heartbeatIntervalMs: 1_000,
+      workerRunner: vi.fn(async () => {
+        await runnerBlocked;
+        return {
+          hadInfraFailure: false,
+          hadWorkerCrash: false,
+        };
+      }),
+    });
+
+    const poolPromise = runWorkerPool(options);
+
+    await vi.advanceTimersByTimeAsync(2_500);
+
+    expect(touchHeartbeat).toHaveBeenCalledTimes(2);
+    expect(touchHeartbeat).toHaveBeenCalledWith('run-1');
+
+    resolveRunner?.();
+    await poolPromise;
+  });
+
+  it('stops heartbeating after the worker pool finishes', async () => {
+    vi.useFakeTimers();
+
+    const { options, touchHeartbeat } = createPoolOptions({
+      heartbeatIntervalMs: 1_000,
+      workerRunner: vi.fn(async () => ({
+        hadInfraFailure: false,
+        hadWorkerCrash: false,
+      })),
+    });
+
+    await runWorkerPool(options);
+
+    const callsAfterFinish = touchHeartbeat.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(touchHeartbeat.mock.calls.length).toBe(callsAfterFinish);
+  });
+
+  it('logs heartbeat failures without preventing finalization', async () => {
+    vi.useFakeTimers();
+
+    let resolveRunner: (() => void) | undefined;
+    const runnerBlocked = new Promise<void>((resolve) => {
+      resolveRunner = resolve;
+    });
+
+    const { options } = createPoolOptions({
+      heartbeatIntervalMs: 1_000,
+      touchHeartbeat: vi.fn(async () => {
+        throw new Error('db unavailable');
+      }),
+      workerRunner: vi.fn(async () => {
+        await runnerBlocked;
+        return {
+          hadInfraFailure: false,
+          hadWorkerCrash: false,
+        };
+      }),
+    });
+    const { logger, entries } = createLogCapture();
+    options.logger = logger;
+
+    const poolPromise = runWorkerPool(options);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        event: 'run_heartbeat_failed',
+        runId: 'run-1',
+        cause: 'db unavailable',
+      }),
+    );
+
+    resolveRunner?.();
+    const summary = await poolPromise;
+
+    expect(summary.finalStatus).toBe('completed');
   });
 });

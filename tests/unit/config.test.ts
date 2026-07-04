@@ -10,6 +10,8 @@ describe('loadConfig', () => {
     );
     expect(defaults.pg.port).toBe(5432);
     expect(defaults.pg.database).toBe('production_site_crawler');
+    expect(defaults.pg.poolMax).toBe(10);
+    expect(loadConfig({ NODE_ENV: 'test' }).pg.poolMax).toBe(2);
     expect(defaults.fetchApiBaseUrl).toBe('http://mock-api.mock.com/fetch');
     expect(defaults.fetchBodyStrategy).toBe('auto');
     expect(defaults.logLevel).toBe('info');
@@ -27,6 +29,7 @@ describe('loadConfig', () => {
 
     const overridden = loadConfig({
       PGPORT: '15432',
+      PG_POOL_MAX: '4',
       CONCURRENCY: '12',
       MAX_URLS: '25',
       MAX_DEPTH: '3',
@@ -41,6 +44,7 @@ describe('loadConfig', () => {
     });
 
     expect(overridden.pg.port).toBe(15432);
+    expect(overridden.pg.poolMax).toBe(4);
     expect(overridden.crawl.concurrency).toBe(12);
     expect(overridden.crawl.maxUrls).toBe(25);
     expect(overridden.crawl.maxDepth).toBe(3);
@@ -56,6 +60,7 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ CONCURRENCY: 'not-a-number' })).toThrow(
       'Invalid numeric environment variable CONCURRENCY',
     );
+    expect(() => loadConfig({ PG_POOL_MAX: '0' })).toThrow('PG_POOL_MAX must be at least 1');
     expect(() => loadConfig({ FETCH_BODY_STRATEGY: 'xml' })).toThrow(
       'Invalid FETCH_BODY_STRATEGY: xml (expected auto | base64 | utf8)',
     );

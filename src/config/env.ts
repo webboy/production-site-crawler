@@ -11,6 +11,7 @@ export interface AppConfig {
     database: string;
     user: string;
     password: string;
+    poolMax: number;
   };
   fetchApiBaseUrl: string;
   fetchBodyStrategy: BodyDecodeStrategy;
@@ -42,6 +43,8 @@ const DEFAULTS = {
   pgDatabase: 'production_site_crawler',
   pgUser: 'crawler',
   pgPassword: 'crawler',
+  pgPoolMax: 10,
+  testPgPoolMax: 2,
   fetchApiBaseUrl: 'http://mock-api.mock.com/fetch',
   logLevel: 'info',
   concurrency: 5,
@@ -111,10 +114,20 @@ function readBodyStrategy(env: NodeJS.ProcessEnv, name: string): BodyDecodeStrat
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const nodeEnv = readString(env, 'NODE_ENV', DEFAULTS.nodeEnv);
   const concurrency = readNumber(env, 'CONCURRENCY', DEFAULTS.concurrency);
+  const pgPoolMax = readNumber(
+    env,
+    'PG_POOL_MAX',
+    nodeEnv === 'test' ? DEFAULTS.testPgPoolMax : DEFAULTS.pgPoolMax,
+  );
 
   if (concurrency < 1) {
     throw new Error('CONCURRENCY must be at least 1');
+  }
+
+  if (pgPoolMax < 1) {
+    throw new Error('PG_POOL_MAX must be at least 1');
   }
 
   return {
@@ -125,6 +138,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       database: readString(env, 'PGDATABASE', DEFAULTS.pgDatabase),
       user: readString(env, 'PGUSER', DEFAULTS.pgUser),
       password: readString(env, 'PGPASSWORD', DEFAULTS.pgPassword),
+      poolMax: pgPoolMax,
     },
     fetchApiBaseUrl: readString(env, 'FETCH_API_BASE_URL', DEFAULTS.fetchApiBaseUrl),
     fetchBodyStrategy: readBodyStrategy(env, 'FETCH_BODY_STRATEGY'),
@@ -150,6 +164,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         DEFAULTS.rateLimitDefaultPauseMs,
       ),
     },
-    nodeEnv: readString(env, 'NODE_ENV', DEFAULTS.nodeEnv),
+    nodeEnv,
   };
 }

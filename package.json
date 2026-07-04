@@ -13,8 +13,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:unit": "vitest run tests/unit",
-    "test:integration": "vitest run tests/integration",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
     "test:coverage": "vitest run --coverage",
     "build": "tsc -p tsconfig.json",
     "prepack": "npm run build",

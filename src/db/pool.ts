@@ -9,7 +9,7 @@ function createPool(): Pool {
   const config = loadConfig();
   const logger = createLogger(config);
 
-  const nextPool = new Pool(
+  const poolConfig =
     config.databaseUrl.trim() !== ''
       ? { connectionString: config.databaseUrl }
       : {
@@ -18,8 +18,12 @@ function createPool(): Pool {
           database: config.pg.database,
           user: config.pg.user,
           password: config.pg.password,
-        },
-  );
+        };
+
+  const nextPool = new Pool({
+    ...poolConfig,
+    max: config.pg.poolMax,
+  });
 
   nextPool.on('error', (error) => {
     logger.error({ event: 'db_pool_error', error }, 'Unexpected PostgreSQL pool error');

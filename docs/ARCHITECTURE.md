@@ -230,14 +230,22 @@ UPDATE crawl_urls
 SET status = 'in_progress', claimed_at = now(), updated_at = now()
 WHERE id = $claimed;
 ```
-Enqueue is idempotent:
+Enqueue is idempotent and atomic under concurrent discovery:
 ```sql
-INSERT INTO crawl_urls (crawl_run_id, url, normalized_url, url_hash, host, depth, status, discovered_from_url_id)
-VALUES ($1,$2,$3,$4,$5,$6,'queued',$7)
+INSERT INTO crawl_urls (...)
+SELECT $1, $2, ...
+WHERE EXISTS (
+  SELECT 1 FROM crawl_runs
+  WHERE id = $1
+    AND (max_urls IS NULL OR urls_enqueued < max_urls)
+)
 ON CONFLICT (crawl_run_id, normalized_url) DO NOTHING
 RETURNING id;
+-- only when RETURNING succeeds:
+UPDATE crawl_runs SET urls_enqueued = urls_enqueued + 1 WHERE id = $1;
+-- otherwise, re-lookup existing id in the same transaction to distinguish dedup conflict from limit skip
 ```
-The unique index makes "process at most once" a database guarantee, safe under crashes, concurrency, and resume. Discovery graph writes use the same idempotency pattern: `url_edges` upserts on `(crawl_run_id, from_url_id, normalized_discovered_url, source)`.
+There is no run-row `FOR UPDATE` lock during enqueue; concurrent workers rely on the unique index plus `ON CONFLICT DO NOTHING` instead of check-then-insert. The unique index makes "process at most once" a database guarantee, safe under crashes, concurrency, and resume. Discovery graph writes use the same idempotency pattern: `url_edges` upserts on `(crawl_run_id, from_url_id, normalized_discovered_url, source)`.
 
 ---
 
@@ -354,7 +362,7 @@ Resumable run statuses are `running` and `paused`. `limit_reached` is resumable 
 
 | Limit | Semantics | Enforcement |
 |---|---|---|
-| `max_urls` | Max in-scope URLs **admitted** to the frontier (incl. seed) | Transactional counter `urls_enqueued` at enqueue time (strict, 0 overshoot) |
+| `max_urls` | Max in-scope URLs **admitted** to the frontier (incl. seed) | Atomic insert gate via `urls_enqueued`; counter increments only on successful `RETURNING id`. Without a run-row lock, concurrent discovery may overshoot by at most roughly the active worker count, but duplicate URLs still dedupe to one row and one counter increment |
 | `max_depth` | Max discovery depth; `0` = seed only | Pre-enqueue check; `null`/`unlimited` = no depth cap |
 | `max_bytes` | Max persisted bytes | Best-effort in-memory check before claim |
 | `max_runtime_seconds` | Per-session runtime budget | Timer before claim |

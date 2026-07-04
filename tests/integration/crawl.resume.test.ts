@@ -187,6 +187,56 @@ describe.skipIf(!databaseReachable)('crawl resume', () => {
     }
   });
 
+  it('resumes failed runs by recovering in_progress work', async () => {
+    const runId = await insertCrawlRun();
+    const url = 'https://example.com/failed-resume-in-progress';
+    const normalized = normalize(url);
+
+    if (normalized === null) {
+      throw new Error('Expected normalized failed resume URL');
+    }
+
+    const row = await query<{ id: string }>(
+      `
+        INSERT INTO crawl_urls (
+          crawl_run_id, url, normalized_url, url_hash, host, depth, status, claimed_at
+        )
+        VALUES ($1, $2, $3, $4, 'example.com', 0, 'in_progress', now())
+        RETURNING id
+      `,
+      [runId, url, normalized, urlHash(normalized)],
+    );
+
+    const urlId = row.rows[0]?.id;
+
+    if (urlId === undefined) {
+      throw new Error('Failed to seed failed resume URL row');
+    }
+
+    await updateCrawlRun(runId, { status: 'failed' });
+
+    const { summary } = await runCrawlWithMocks({
+      seedUrl: url,
+      resumeRunId: runId,
+      mockResponses: {
+        [url]: {
+          statusCode: 200,
+          headers: { 'Content-Type': 'text/html' },
+          body: Buffer.from('<html></html>'),
+        },
+      },
+      pollMs: 50,
+    });
+
+    try {
+      expect(summary.finalStatus).toBe('completed');
+      expect(summary.statusCounts.done).toBe(1);
+      await expect(readCrawlUrl(urlId)).resolves.toMatchObject({ status: 'done' });
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
   it('marks graceful shutdown as paused and resumes remaining work', async () => {
     const runId = await insertCrawlRun();
     const firstUrl = 'https://example.com/pause-first';
@@ -289,6 +339,9 @@ describe.skipIf(!databaseReachable)('crawl resume', () => {
       const resumed = await crawlRunService.resumeRun(created.id);
       expect(resumed.run.concurrency).toBe(4);
       expect(resumed.run.maxUrls).toBe(25);
+      expect(resumed.run.maxDepth).toBe(3);
+      expect(resumed.run.maxBytes).toBe(4096);
+      expect(resumed.run.maxRuntimeSeconds).toBe(120);
       expect(resumed.run.outputDir).toBe('/tmp/persisted-output');
 
       const overridden = await crawlRunService.resumeRun(created.id, {
@@ -297,6 +350,20 @@ describe.skipIf(!databaseReachable)('crawl resume', () => {
       });
       expect(overridden.run.concurrency).toBe(2);
       expect(overridden.run.maxUrls).toBe(50);
+
+      const unlimited = await crawlRunService.resumeRun(created.id, {
+        overrides: { maxUrls: null, maxDepth: null, maxBytes: null, maxRuntimeSeconds: null },
+        explicit: {
+          maxUrls: true,
+          maxDepth: true,
+          maxBytes: true,
+          maxRuntimeSeconds: true,
+        },
+      });
+      expect(unlimited.run.maxUrls).toBeNull();
+      expect(unlimited.run.maxDepth).toBeNull();
+      expect(unlimited.run.maxBytes).toBeNull();
+      expect(unlimited.run.maxRuntimeSeconds).toBeNull();
     } finally {
       await cleanupCrawlRun(created.id);
     }
@@ -358,6 +425,18 @@ describe.skipIf(!databaseReachable)('crawl resume', () => {
 
     try {
       await expect(crawlRunService.resumeRun(runId)).rejects.toThrow(/explicit increased limit/);
+      await expect(
+        crawlRunService.resumeRun(runId, {
+          overrides: { maxUrls: 1 },
+          explicit: { maxUrls: true },
+        }),
+      ).rejects.toThrow(/explicit increased limit/);
+      await expect(
+        crawlRunService.resumeRun(runId, {
+          overrides: { maxUrls: 0 },
+          explicit: { maxUrls: true },
+        }),
+      ).rejects.toThrow(/explicit increased limit/);
 
       const resumed = await crawlRunService.resumeRun(runId, {
         overrides: { maxUrls: 5 },
@@ -366,6 +445,60 @@ describe.skipIf(!databaseReachable)('crawl resume', () => {
 
       expect(resumed.run.status).toBe('running');
       expect(resumed.run.maxUrls).toBe(5);
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
+  it('treats explicit unlimited as an increased limit for limit_reached runs', async () => {
+    const runId = await insertCrawlRun();
+    const runRepository = new RunRepository();
+    const frontierRepository = new FrontierRepository();
+    const crawlRunService = new CrawlRunService(runRepository, frontierRepository);
+
+    await updateCrawlRun(runId, {
+      status: 'limit_reached',
+      maxUrls: 1,
+      maxDepth: 1,
+      maxBytes: 1024,
+      maxRuntimeSeconds: 60,
+    });
+
+    try {
+      const resumed = await crawlRunService.resumeRun(runId, {
+        overrides: { maxUrls: null },
+        explicit: { maxUrls: true },
+      });
+
+      expect(resumed.run.status).toBe('running');
+      expect(resumed.run.maxUrls).toBeNull();
+      expect(resumed.run.maxDepth).toBe(1);
+      expect(resumed.run.maxBytes).toBe(1024);
+      expect(resumed.run.maxRuntimeSeconds).toBe(60);
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
+  it('accepts the same runtime limit for limit_reached runs because runtime is per-session', async () => {
+    const runId = await insertCrawlRun();
+    const runRepository = new RunRepository();
+    const frontierRepository = new FrontierRepository();
+    const crawlRunService = new CrawlRunService(runRepository, frontierRepository);
+
+    await updateCrawlRun(runId, {
+      status: 'limit_reached',
+      maxRuntimeSeconds: 60,
+    });
+
+    try {
+      const resumed = await crawlRunService.resumeRun(runId, {
+        overrides: { maxRuntimeSeconds: 60 },
+        explicit: { maxRuntimeSeconds: true },
+      });
+
+      expect(resumed.run.status).toBe('running');
+      expect(resumed.run.maxRuntimeSeconds).toBe(60);
     } finally {
       await cleanupCrawlRun(runId);
     }
@@ -424,7 +557,7 @@ describe.skipIf(!databaseReachable)('crawl resume', () => {
     const crawlRunService = new CrawlRunService(runRepository, frontierRepository);
 
     try {
-      for (const status of ['completed', 'cancelled', 'failed'] as const) {
+      for (const status of ['completed', 'completed_with_failures', 'cancelled'] as const) {
         await updateCrawlRun(runId, { status });
         await expect(crawlRunService.resumeRun(runId)).rejects.toThrow(/terminal/);
       }

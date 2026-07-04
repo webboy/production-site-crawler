@@ -241,6 +241,8 @@ export async function updateCrawlRun(
     startedAtOffsetMs?: number;
     maxRuntimeSeconds?: number | null;
     maxUrls?: number | null;
+    maxDepth?: number | null;
+    maxBytes?: number | null;
     concurrency?: number;
     outputDir?: string;
   },
@@ -267,6 +269,16 @@ export async function updateCrawlRun(
   if (updates.maxUrls !== undefined) {
     sets.push(`max_urls = $${paramIndex++}`);
     values.push(updates.maxUrls);
+  }
+
+  if (updates.maxDepth !== undefined) {
+    sets.push(`max_depth = $${paramIndex++}`);
+    values.push(updates.maxDepth);
+  }
+
+  if (updates.maxBytes !== undefined) {
+    sets.push(`max_bytes = $${paramIndex++}`);
+    values.push(updates.maxBytes);
   }
 
   if (updates.concurrency !== undefined) {

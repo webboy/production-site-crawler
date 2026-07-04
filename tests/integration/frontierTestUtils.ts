@@ -48,6 +48,10 @@ export function createFrontierRepository(): FrontierRepository {
   return new FrontierRepository();
 }
 
+export async function closeDatabasePool(): Promise<void> {
+  await closePool();
+}
+
 export function buildUrlInput(crawlRunId: string, index: number) {
   return {
     crawlRunId,

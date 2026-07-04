@@ -173,6 +173,7 @@ export async function runWorker(deps: WorkerDependencies): Promise<void> {
     if (task === null) {
       let inProgress: number;
       let futureRetry: number;
+      let readyQueued: number;
 
       try {
         inProgress = await runInfraOperation('countInProgress', deps, infraState, async () =>
@@ -181,11 +182,14 @@ export async function runWorker(deps: WorkerDependencies): Promise<void> {
         futureRetry = await runInfraOperation('countFutureRetryable', deps, infraState, async () =>
           deps.frontier.countFutureRetryable(deps.run.id),
         );
+        readyQueued = await runInfraOperation('countReadyQueued', deps, infraState, async () =>
+          deps.frontier.countReadyQueued(deps.run.id),
+        );
       } catch {
         break;
       }
 
-      if (inProgress > 0 || futureRetry > 0) {
+      if (inProgress > 0 || futureRetry > 0 || readyQueued > 0) {
         await sleep(pollMs);
         continue;
       }

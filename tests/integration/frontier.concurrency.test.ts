@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { closePool, query } from '../../src/db/pool.js';
+import { query } from '../../src/db/pool.js';
 import {
   buildUrlInput,
   canReachDatabase,
+  closeDatabasePool,
   cleanupCrawlRun,
   createFrontierRepository,
   insertCrawlRun,
@@ -12,7 +13,7 @@ const databaseReachable = await canReachDatabase();
 
 describe.skipIf(!databaseReachable)('FrontierRepository concurrent claiming', () => {
   afterAll(async () => {
-    await closePool();
+    await closeDatabasePool();
   });
 
   it('inserts a new URL exactly once under concurrent enqueue attempts', async () => {

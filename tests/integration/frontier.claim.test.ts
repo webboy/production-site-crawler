@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { closePool, query } from '../../src/db/pool.js';
+import { query } from '../../src/db/pool.js';
 import type { CrawlUrlStatus } from '../../src/frontier/types.js';
 import {
   buildUrlInput,
   canReachDatabase,
+  closeDatabasePool,
   cleanupCrawlRun,
   createFrontierRepository,
   insertCrawlRun,
@@ -34,7 +35,7 @@ async function readUrl(id: string) {
 
 describe.skipIf(!databaseReachable)('FrontierRepository claiming and transitions', () => {
   afterAll(async () => {
-    await closePool();
+    await closeDatabasePool();
   });
 
   it('claims a queued URL and marks it succeeded', async () => {

@@ -1,12 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { closePool, query, withTransaction } from '../../src/db/pool.js';
-import { canReachDatabase } from './frontierTestUtils.js';
+import { query, withTransaction } from '../../src/db/pool.js';
+import { canReachDatabase, closeDatabasePool } from './frontierTestUtils.js';
 
 const databaseReachable = await canReachDatabase();
 
 describe.skipIf(!databaseReachable)('crawl schema', () => {
   afterAll(async () => {
-    await closePool();
+    await closeDatabasePool();
   });
 
   it('creates the core tables and enforces URL deduplication per run', async () => {

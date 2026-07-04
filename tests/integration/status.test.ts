@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
-import { query, closePool } from '../../src/db/pool.js';
+import { query } from '../../src/db/pool.js';
 import { StatusService } from '../../src/status/StatusService.js';
-import { canReachDatabase, cleanupCrawlRun } from './frontierTestUtils.js';
+import { canReachDatabase, cleanupCrawlRun, closeDatabasePool } from './frontierTestUtils.js';
 
 const databaseReachable = await canReachDatabase();
 
 describe.skipIf(!databaseReachable)('status integration', () => {
   afterAll(async () => {
-    await closePool();
+    await closeDatabasePool();
   });
 
   it('aggregates run, URL status counts, content kinds, and bytes', async () => {

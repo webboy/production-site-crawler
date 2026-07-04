@@ -62,43 +62,51 @@ function hasExplicitLimitIncrease(
   overrides: ResumeRunOverrides,
   explicit: ResumeRunExplicitFlags,
 ): boolean {
-  if (
-    explicit.maxUrls &&
-    overrides.maxUrls != null &&
-    run.maxUrls !== null &&
-    overrides.maxUrls > run.maxUrls
-  ) {
+  if (isFiniteLimitIncrease(run.maxUrls, overrides.maxUrls, explicit.maxUrls)) {
+    return true;
+  }
+
+  if (isFiniteLimitIncrease(run.maxDepth, overrides.maxDepth, explicit.maxDepth)) {
+    return true;
+  }
+
+  if (isFiniteLimitIncrease(run.maxBytes, overrides.maxBytes, explicit.maxBytes)) {
     return true;
   }
 
   if (
-    explicit.maxDepth &&
-    overrides.maxDepth != null &&
-    run.maxDepth !== null &&
-    overrides.maxDepth > run.maxDepth
-  ) {
-    return true;
-  }
-
-  if (
-    explicit.maxBytes &&
-    overrides.maxBytes != null &&
-    run.maxBytes !== null &&
-    overrides.maxBytes > run.maxBytes
-  ) {
-    return true;
-  }
-
-  if (
-    explicit.maxRuntimeSeconds &&
-    overrides.maxRuntimeSeconds != null &&
-    run.maxRuntimeSeconds !== null &&
-    overrides.maxRuntimeSeconds >= run.maxRuntimeSeconds
+    isFiniteLimitIncrease(
+      run.maxRuntimeSeconds,
+      overrides.maxRuntimeSeconds,
+      explicit.maxRuntimeSeconds,
+      { allowEqual: true },
+    )
   ) {
     return true;
   }
 
   return false;
+}
+
+function isFiniteLimitIncrease(
+  current: number | null,
+  next: number | null | undefined,
+  isExplicit = false,
+  options: { allowEqual?: boolean } = {},
+): boolean {
+  if (!isExplicit || next === undefined) {
+    return false;
+  }
+
+  if (next === null) {
+    return current !== null;
+  }
+
+  if (current === null) {
+    return false;
+  }
+
+  return options.allowEqual === true ? next >= current : next > current;
 }
 
 export class CrawlRunService {
@@ -200,13 +208,27 @@ export class CrawlRunService {
       );
     }
 
-    const configUpdates = {
-      concurrency: explicit.concurrency ? overrides.concurrency : undefined,
-      maxUrls: explicit.maxUrls ? overrides.maxUrls : undefined,
-      maxDepth: explicit.maxDepth ? overrides.maxDepth : undefined,
-      maxBytes: explicit.maxBytes ? overrides.maxBytes : undefined,
-      maxRuntimeSeconds: explicit.maxRuntimeSeconds ? overrides.maxRuntimeSeconds : undefined,
-    };
+    const configUpdates: ResumeRunOverrides = {};
+
+    if (explicit.concurrency && overrides.concurrency !== undefined) {
+      configUpdates.concurrency = overrides.concurrency;
+    }
+
+    if (explicit.maxUrls && overrides.maxUrls !== undefined) {
+      configUpdates.maxUrls = overrides.maxUrls;
+    }
+
+    if (explicit.maxDepth && overrides.maxDepth !== undefined) {
+      configUpdates.maxDepth = overrides.maxDepth;
+    }
+
+    if (explicit.maxBytes && overrides.maxBytes !== undefined) {
+      configUpdates.maxBytes = overrides.maxBytes;
+    }
+
+    if (explicit.maxRuntimeSeconds && overrides.maxRuntimeSeconds !== undefined) {
+      configUpdates.maxRuntimeSeconds = overrides.maxRuntimeSeconds;
+    }
 
     const recoveredInProgressCount = await this.frontierRepository.recoverAllInProgress(runId);
 

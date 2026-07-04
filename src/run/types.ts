@@ -71,12 +71,11 @@ export interface UpdateRunConfigInput {
   maxRuntimeSeconds?: number | null;
 }
 
-const RESUMABLE_STATUSES = new Set<CrawlRunStatus>(['running', 'paused']);
+const RESUMABLE_STATUSES = new Set<CrawlRunStatus>(['running', 'paused', 'failed']);
 
 const FINAL_STATUSES = new Set<CrawlRunStatus>([
   'completed',
   'completed_with_failures',
-  'failed',
   'cancelled',
 ]);
 
@@ -90,7 +89,7 @@ export function mapCrawlRunRow(row: CrawlRunRow): CrawlRun {
     status: row.status,
     maxUrls: row.max_urls,
     maxDepth: row.max_depth,
-    maxBytes: row.max_bytes,
+    maxBytes: row.max_bytes === null ? null : Number(row.max_bytes),
     maxRuntimeSeconds: row.max_runtime_seconds,
     concurrency: row.concurrency,
     outputDir: row.output_dir,
@@ -112,5 +111,7 @@ export function isFinalRunStatus(status: CrawlRunStatus): boolean {
 
 /** @deprecated Use isFinalRunStatus or isResumableRunStatus instead */
 export function isTerminalRunStatus(status: CrawlRunStatus): boolean {
-  return status !== 'running' && status !== 'paused' && status !== 'limit_reached';
+  return (
+    status !== 'running' && status !== 'paused' && status !== 'failed' && status !== 'limit_reached'
+  );
 }

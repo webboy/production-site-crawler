@@ -127,28 +127,44 @@ export class RunRepository {
   }
 
   async markRunning(id: string, updates: UpdateRunConfigInput = {}): Promise<CrawlRun> {
+    const setClauses = ["status = 'running'", 'finished_at = NULL'];
+    const values: unknown[] = [id];
+
+    const appendUpdate = (column: string, value: unknown): void => {
+      values.push(value);
+      setClauses.push(`${column} = $${values.length}`);
+    };
+
+    if (updates.concurrency !== undefined) {
+      appendUpdate('concurrency', updates.concurrency);
+    }
+
+    if (Object.hasOwn(updates, 'maxUrls') && updates.maxUrls !== undefined) {
+      appendUpdate('max_urls', updates.maxUrls);
+    }
+
+    if (Object.hasOwn(updates, 'maxDepth') && updates.maxDepth !== undefined) {
+      appendUpdate('max_depth', updates.maxDepth);
+    }
+
+    if (Object.hasOwn(updates, 'maxBytes') && updates.maxBytes !== undefined) {
+      appendUpdate('max_bytes', updates.maxBytes);
+    }
+
+    if (Object.hasOwn(updates, 'maxRuntimeSeconds') && updates.maxRuntimeSeconds !== undefined) {
+      appendUpdate('max_runtime_seconds', updates.maxRuntimeSeconds);
+    }
+
+    setClauses.push('updated_at = now()');
+
     const result = await this.pool.query<CrawlRunRow>(
       `
         UPDATE crawl_runs
-        SET status = 'running',
-            finished_at = NULL,
-            concurrency = COALESCE($2, concurrency),
-            max_urls = COALESCE($3, max_urls),
-            max_depth = COALESCE($4, max_depth),
-            max_bytes = COALESCE($5, max_bytes),
-            max_runtime_seconds = COALESCE($6, max_runtime_seconds),
-            updated_at = now()
+        SET ${setClauses.join(',\n            ')}
         WHERE id = $1
         RETURNING ${CRAWL_RUN_COLUMNS}
       `,
-      [
-        id,
-        updates.concurrency ?? null,
-        updates.maxUrls ?? null,
-        updates.maxDepth ?? null,
-        updates.maxBytes ?? null,
-        updates.maxRuntimeSeconds ?? null,
-      ],
+      values,
     );
 
     const row = result.rows[0];

@@ -66,4 +66,30 @@ describe.skipIf(!databaseReachable)('crawl lifecycle', () => {
       await cleanupCrawlRun(runId);
     }
   });
+
+  it('persists unlimited max URLs as NULL', async () => {
+    const seedUrl = 'https://example.com/unlimited-max-urls';
+
+    const { summary, runId } = await runCrawlWithMocks({
+      seedUrl,
+      maxUrls: null,
+      mockResponses: {
+        [seedUrl]: {
+          statusCode: 200,
+          headers: { 'Content-Type': 'text/html' },
+          body: Buffer.from('<html><body>ok</body></html>'),
+        },
+      },
+      concurrency: 1,
+    });
+
+    try {
+      expect(summary.finalStatus).toBe('completed');
+
+      const run = await readCrawlRun(runId);
+      expect(run?.maxUrls).toBeNull();
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
 });

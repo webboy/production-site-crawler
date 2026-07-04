@@ -7,8 +7,8 @@ import {
 } from '../../src/run/types.js';
 
 describe('run status helpers', () => {
-  it('treats running, paused, and failed as resumable', () => {
-    expect(isResumableRunStatus('running')).toBe(true);
+  it('treats paused and failed as resumable', () => {
+    expect(isResumableRunStatus('running')).toBe(false);
     expect(isResumableRunStatus('paused')).toBe(true);
     expect(isResumableRunStatus('failed')).toBe(true);
     expect(isResumableRunStatus('limit_reached')).toBe(false);
@@ -27,7 +27,7 @@ describe('run status helpers', () => {
   });
 
   it('keeps deprecated terminal helper aligned with resumable statuses', () => {
-    expect(isTerminalRunStatus('running')).toBe(false);
+    expect(isTerminalRunStatus('running')).toBe(true);
     expect(isTerminalRunStatus('paused')).toBe(false);
     expect(isTerminalRunStatus('failed')).toBe(false);
     expect(isTerminalRunStatus('limit_reached')).toBe(false);

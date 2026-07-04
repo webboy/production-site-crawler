@@ -17,6 +17,8 @@ describe('loadConfig', () => {
     expect(defaults.logLevel).toBe('info');
     expect(defaults.crawl.concurrency).toBe(5);
     expect(defaults.crawl.maxUrls).toBe(1000);
+    expect(loadConfig({ MAX_URLS: '0' }).crawl.maxUrls).toBeNull();
+    expect(loadConfig({ MAX_URLS: '' }).crawl.maxUrls).toBeNull();
     expect(defaults.crawl.maxDepth).toBe(5);
     expect(defaults.crawl.maxBytes).toBe(104857600);
     expect(defaults.crawl.maxRuntimeSeconds).toBe(3600);
@@ -61,6 +63,12 @@ describe('loadConfig', () => {
       'Invalid numeric environment variable CONCURRENCY',
     );
     expect(() => loadConfig({ PG_POOL_MAX: '0' })).toThrow('PG_POOL_MAX must be at least 1');
+    expect(() => loadConfig({ MAX_URLS: '-1' })).toThrow(
+      'MAX_URLS must be >= 1, or 0/empty for unlimited',
+    );
+    expect(() => loadConfig({ MAX_URLS: 'not-a-number' })).toThrow(
+      'Invalid numeric environment variable MAX_URLS',
+    );
     expect(() => loadConfig({ FETCH_BODY_STRATEGY: 'xml' })).toThrow(
       'Invalid FETCH_BODY_STRATEGY: xml (expected auto | base64 | utf8)',
     );

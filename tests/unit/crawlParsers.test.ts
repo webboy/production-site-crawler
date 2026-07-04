@@ -1,6 +1,11 @@
 import { InvalidArgumentError } from 'commander';
 import { describe, expect, it } from 'vitest';
-import { parseConcurrency, parseMaxDepth, parseUnlimitedOrPositive } from '../../src/cli/crawl.js';
+import {
+  parseConcurrency,
+  parseMaxDepth,
+  parseMaxUrls,
+  parseUnlimitedOrPositive,
+} from '../../src/cli/crawl.js';
 
 describe('crawl CLI parsers', () => {
   it('rejects zero concurrency', () => {
@@ -11,13 +16,21 @@ describe('crawl CLI parsers', () => {
     expect(parseConcurrency('3')).toBe(3);
   });
 
-  it('maps unlimited sentinels to null for max urls', () => {
-    expect(parseUnlimitedOrPositive('unlimited', 'max-urls')).toBeNull();
-    expect(parseUnlimitedOrPositive('none', 'max-urls')).toBeNull();
+  it('maps max URL unlimited sentinels and zero to null', () => {
+    expect(parseMaxUrls('unlimited')).toBeNull();
+    expect(parseMaxUrls('none')).toBeNull();
+    expect(parseMaxUrls('0')).toBeNull();
+    expect(parseMaxUrls('')).toBeNull();
   });
 
-  it('rejects zero max urls', () => {
-    expect(() => parseUnlimitedOrPositive('0', 'max-urls')).toThrow(InvalidArgumentError);
+  it('accepts positive max urls and rejects invalid values', () => {
+    expect(parseMaxUrls('3')).toBe(3);
+    expect(() => parseMaxUrls('-1')).toThrow(InvalidArgumentError);
+    expect(() => parseMaxUrls('abc')).toThrow(InvalidArgumentError);
+  });
+
+  it('keeps zero invalid for other positive-or-unlimited limits', () => {
+    expect(() => parseUnlimitedOrPositive('0', 'max-bytes')).toThrow(InvalidArgumentError);
   });
 
   it('preserves maxDepth zero as seed-only', () => {

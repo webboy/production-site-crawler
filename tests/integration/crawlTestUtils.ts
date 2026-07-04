@@ -51,7 +51,7 @@ export interface RunCrawlWithMocksOptions {
   };
   control?: WorkerControl;
   pollMs?: number;
-  maxUrls?: number;
+  maxUrls?: number | null;
 }
 
 export class TrackingRateLimiter extends SimpleRateLimiter {
@@ -121,7 +121,7 @@ export async function runCrawlWithMocks(
         ).run
       : await crawlRunService.createRun(options.seedUrl, {
           concurrency: options.concurrency ?? 1,
-          maxUrls: options.maxUrls ?? config.crawl.maxUrls,
+          maxUrls: options.maxUrls !== undefined ? options.maxUrls : config.crawl.maxUrls,
           maxDepth: config.crawl.maxDepth,
           maxBytes: config.crawl.maxBytes,
           maxRuntimeSeconds: config.crawl.maxRuntimeSeconds,

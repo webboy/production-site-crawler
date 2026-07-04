@@ -61,52 +61,11 @@ interface StatusCountRow extends QueryResultRow {
   count: string;
 }
 
-interface RunLimitRow extends QueryResultRow {
-  max_urls: number | null;
-  urls_enqueued: number;
-}
-
 export class FrontierRepository {
   constructor(private readonly pool: Pool = getPool()) {}
 
   async enqueueUrl(input: EnqueueUrlInput): Promise<EnqueueUrlResult> {
     return withTransaction(async (client) => {
-      const existingResult = await client.query<{ id: string }>(
-        `
-          SELECT id
-          FROM crawl_urls
-          WHERE crawl_run_id = $1
-            AND normalized_url = $2
-        `,
-        [input.crawlRunId, input.normalizedUrl],
-      );
-
-      const existingId = existingResult.rows[0]?.id;
-
-      if (existingId !== undefined) {
-        return { id: existingId, inserted: false };
-      }
-
-      const runResult = await client.query<RunLimitRow>(
-        `
-          SELECT max_urls, urls_enqueued
-          FROM crawl_runs
-          WHERE id = $1
-          FOR UPDATE
-        `,
-        [input.crawlRunId],
-      );
-
-      const runRow = runResult.rows[0];
-
-      if (runRow === undefined) {
-        throw new Error(`Crawl run not found: ${input.crawlRunId}`);
-      }
-
-      if (runRow.max_urls !== null && runRow.urls_enqueued >= runRow.max_urls) {
-        return { id: null, inserted: false, skippedLimit: true };
-      }
-
       const insertResult = await client.query<{ id: string }>(
         `
           INSERT INTO crawl_urls (
@@ -120,7 +79,14 @@ export class FrontierRepository {
             status,
             discovered_from_url_id
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)
+          SELECT $1, $2, $3, $4, $5, $6, $7, 'queued', $8
+          WHERE EXISTS (
+            SELECT 1
+            FROM crawl_runs
+            WHERE id = $1
+              AND (max_urls IS NULL OR urls_enqueued < max_urls)
+          )
+          ON CONFLICT (crawl_run_id, normalized_url) DO NOTHING
           RETURNING id
         `,
         [
@@ -137,21 +103,52 @@ export class FrontierRepository {
 
       const insertedId = insertResult.rows[0]?.id;
 
-      if (insertedId === undefined) {
-        throw new Error('Failed to insert crawl URL');
+      if (insertedId !== undefined) {
+        await client.query(
+          `
+            UPDATE crawl_runs
+            SET urls_enqueued = urls_enqueued + 1,
+                updated_at = now()
+            WHERE id = $1
+          `,
+          [input.crawlRunId],
+        );
+
+        return { id: insertedId, inserted: true };
       }
 
-      await client.query(
+      const existingResult = await client.query<{ id: string }>(
         `
-          UPDATE crawl_runs
-          SET urls_enqueued = urls_enqueued + 1,
-              updated_at = now()
-          WHERE id = $1
+          SELECT id
+          FROM crawl_urls
+          WHERE crawl_run_id = $1
+            AND normalized_url = $2
+        `,
+        [input.crawlRunId, input.normalizedUrl],
+      );
+
+      const existingId = existingResult.rows[0]?.id;
+
+      if (existingId !== undefined) {
+        return { id: existingId, inserted: false };
+      }
+
+      const runExistsResult = await client.query<{ exists: boolean }>(
+        `
+          SELECT EXISTS (
+            SELECT 1
+            FROM crawl_runs
+            WHERE id = $1
+          ) AS exists
         `,
         [input.crawlRunId],
       );
 
-      return { id: insertedId, inserted: true };
+      if (runExistsResult.rows[0]?.exists !== true) {
+        throw new Error(`Crawl run not found: ${input.crawlRunId}`);
+      }
+
+      return { id: null, inserted: false, skippedLimit: true };
     });
   }
 

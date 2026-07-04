@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { query } from '../../src/db/pool.js';
 import { normalize } from '../../src/url/UrlNormalizer.js';
+import { MAX_REDIRECTS } from '../../src/worker/constants.js';
 import {
   canReachDatabase,
   cleanupCrawlRun,
@@ -79,6 +80,214 @@ describe.skipIf(!databaseReachable)('crawl redirect handling', () => {
         source: 'redirect',
         to_url_id: targetId,
       });
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
+  it('re-fetches a trailing-slash self-redirect on the same row', async () => {
+    const seedUrl = 'https://example.com/en';
+    const targetUrl = 'https://example.com/en/';
+    const normalizedSeedUrl = normalize(seedUrl);
+
+    const { summary, runId } = await runCrawlWithMocks({
+      seedUrl,
+      mockResponses: {
+        [seedUrl]: {
+          statusCode: 301,
+          headers: { Location: '/en/' },
+          body: null,
+        },
+        [targetUrl]: {
+          statusCode: 200,
+          headers: { 'Content-Type': 'text/html' },
+          body: Buffer.from('<html><title>ok</title></html>'),
+        },
+      },
+    });
+
+    try {
+      expect(summary.statusCounts.redirected).toBe(0);
+      expect(summary.statusCounts.done).toBe(1);
+
+      if (normalizedSeedUrl === null) {
+        throw new Error('Expected normalized seed URL');
+      }
+
+      const sourceId = await getUrlIdByNormalizedUrl(runId, normalizedSeedUrl);
+
+      if (sourceId === null) {
+        throw new Error('Expected seed URL row');
+      }
+
+      await expect(readCrawlUrl(sourceId)).resolves.toMatchObject({
+        status: 'done',
+        http_status_code: 200,
+        redirect_count: 1,
+      });
+
+      const rowResult = await query<{ url: string }>(
+        `
+          SELECT url
+          FROM crawl_urls
+          WHERE id = $1
+        `,
+        [sourceId],
+      );
+
+      expect(rowResult.rows[0]?.url).toBe(targetUrl);
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
+  it('re-fetches an http to https self-redirect on the same row', async () => {
+    const seedUrl = 'http://example.com/scheme';
+    const targetUrl = 'https://example.com/scheme';
+    const normalizedSeedUrl = normalize(seedUrl);
+
+    const { summary, runId } = await runCrawlWithMocks({
+      seedUrl,
+      mockResponses: {
+        [seedUrl]: {
+          statusCode: 301,
+          headers: { Location: targetUrl },
+          body: null,
+        },
+        [targetUrl]: {
+          statusCode: 200,
+          headers: { 'Content-Type': 'text/html' },
+          body: Buffer.from('<html><title>ok</title></html>'),
+        },
+      },
+    });
+
+    try {
+      expect(summary.statusCounts.redirected).toBe(0);
+      expect(summary.statusCounts.done).toBe(1);
+
+      if (normalizedSeedUrl === null) {
+        throw new Error('Expected normalized seed URL');
+      }
+
+      const sourceId = await getUrlIdByNormalizedUrl(runId, normalizedSeedUrl);
+
+      if (sourceId === null) {
+        throw new Error('Expected seed URL row');
+      }
+
+      await expect(readCrawlUrl(sourceId)).resolves.toMatchObject({
+        status: 'done',
+        http_status_code: 200,
+        redirect_count: 1,
+      });
+
+      const rowResult = await query<{ url: string }>(
+        `
+          SELECT url
+          FROM crawl_urls
+          WHERE id = $1
+        `,
+        [sourceId],
+      );
+
+      expect(rowResult.rows[0]?.url).toBe(targetUrl);
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
+  it('bounds an endless self-redirect loop with MAX_REDIRECTS', async () => {
+    const seedUrl = 'https://example.com/self-loop';
+    const targetUrl = 'https://example.com/self-loop/';
+    const normalizedSeedUrl = normalize(seedUrl);
+
+    const { summary, runId } = await runCrawlWithMocks({
+      seedUrl,
+      mockResponses: {
+        [seedUrl]: {
+          statusCode: 301,
+          headers: { Location: '/self-loop/' },
+          body: null,
+        },
+        [targetUrl]: {
+          statusCode: 301,
+          headers: { Location: '/self-loop/' },
+          body: null,
+        },
+      },
+    });
+
+    try {
+      expect(summary.statusCounts.done).toBe(0);
+      expect(summary.statusCounts.redirected).toBe(0);
+      expect(summary.statusCounts.permanent_failed).toBe(1);
+
+      if (normalizedSeedUrl === null) {
+        throw new Error('Expected normalized seed URL');
+      }
+
+      const sourceId = await getUrlIdByNormalizedUrl(runId, normalizedSeedUrl);
+
+      if (sourceId === null) {
+        throw new Error('Expected seed URL row');
+      }
+
+      await expect(readCrawlUrl(sourceId)).resolves.toMatchObject({
+        status: 'permanent_failed',
+        last_error_type: 'redirect_limit_exceeded',
+        redirect_count: MAX_REDIRECTS,
+      });
+    } finally {
+      await cleanupCrawlRun(runId);
+    }
+  });
+
+  it('marks invalid Location as permanent_failed without recording a redirect edge', async () => {
+    const seedUrl = 'https://example.com/redirect-invalid-location';
+    const normalizedSeedUrl = normalize(seedUrl);
+
+    const { summary, runId } = await runCrawlWithMocks({
+      seedUrl,
+      mockResponses: {
+        [seedUrl]: {
+          statusCode: 302,
+          headers: { Location: 'javascript:void(0)' },
+          body: null,
+        },
+      },
+    });
+
+    try {
+      expect(summary.statusCounts.permanent_failed).toBe(1);
+      expect(summary.statusCounts.redirected).toBe(0);
+
+      if (normalizedSeedUrl === null) {
+        throw new Error('Expected normalized seed URL');
+      }
+
+      const sourceId = await getUrlIdByNormalizedUrl(runId, normalizedSeedUrl);
+
+      if (sourceId === null) {
+        throw new Error('Expected seed URL row');
+      }
+
+      await expect(readCrawlUrl(sourceId)).resolves.toMatchObject({
+        status: 'permanent_failed',
+        last_error_type: 'redirect_invalid_location',
+        attempt_count: 0,
+      });
+
+      const edgeResult = await query<{ count: string }>(
+        `
+          SELECT count(*)::text AS count
+          FROM url_edges
+          WHERE crawl_run_id = $1
+        `,
+        [runId],
+      );
+
+      expect(Number(edgeResult.rows[0]?.count ?? 0)).toBe(0);
     } finally {
       await cleanupCrawlRun(runId);
     }

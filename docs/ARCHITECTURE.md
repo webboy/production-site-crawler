@@ -254,13 +254,14 @@ The unique index makes "process at most once" a database guarantee, safe under c
 | 429 | respect `Retry-After`, global pause, retry **without consuming URL attempt budget** | `retryable_failed` |
 | 500 / network error | backoff retry | `retryable_failed` |
 | 301/302/303/307/308 + `Location` | resolve, scope-check, enqueue in-scope target at same depth, record edge | source `redirected`; target `queued`/`done` |
-| 301/302/303/307/308 without `Location` | no retry | `permanent_failed` (`redirect_missing_location`) |
+| 301/302/303/307/308 to same dedup key | update the same row's fetch URL, increment `redirect_count`, requeue | eventual `done` or `permanent_failed` at redirect limit |
+| 301/302/303/307/308 without valid `Location` | no retry | `permanent_failed` (`redirect_missing_location` / `redirect_invalid_location`) |
 
 ### Headers (case-insensitive)
 `Content-Type` → handler; `Content-Length` → sanity-check vs body length; `Retry-After` → 429 scheduling (parses both delta-seconds and HTTP-date); `ETag` → stored for future conditional fetch; `Location` → relevant only if a 3xx appears (see below).
 
 ### Redirects
-When the Fetch API returns 301, 302, 303, 307, or 308 with a `Location` header, the worker resolves the target relative to the fetched URL, normalizes it, and scope-checks it. In-scope targets are enqueued at the **same crawl depth** as the source URL with an incremented `redirect_count`; out-of-scope targets are recorded only as `url_edges` with `source: redirect`. The source URL becomes `redirected` (not retried). Missing `Location` becomes `permanent_failed`. Redirect chains are bounded by `MAX_REDIRECTS` (10); exceeding the limit becomes `permanent_failed` with `redirect_limit_exceeded`. Duplicate targets rely on the existing unique index on `(crawl_run_id, normalized_url)`.
+When the Fetch API returns 301, 302, 303, 307, or 308 with a `Location` header, the worker resolves the target relative to the fetched URL, normalizes it, and scope-checks it. In-scope targets are enqueued at the **same crawl depth** as the source URL with an incremented `redirect_count`; out-of-scope targets are recorded only as `url_edges` with `source: redirect`. The source URL becomes `redirected` (not retried). If the target normalizes to the source row's own dedup key (typical trailing-slash or `http` → `https` redirect), the worker does **not** mark the row `redirected`; it updates the same row's fetch `url`, increments `redirect_count`, clears the claim, and requeues it so the canonical target is fetched. Self-redirects do not record `url_edges` because there is no distinct graph edge. Missing or invalid `Location` becomes `permanent_failed`. Redirect chains are bounded by `MAX_REDIRECTS` (10); exceeding the limit becomes `permanent_failed` with `redirect_limit_exceeded`. Duplicate targets rely on the existing unique index on `(crawl_run_id, normalized_url)`.
 
 If the external Fetch API follows redirects internally and only returns final 200 envelopes, this path is dormant in production but remains covered by mock/integration tests.
 

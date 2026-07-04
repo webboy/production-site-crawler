@@ -27,12 +27,7 @@ describe('logContentLengthMismatch', () => {
   it('logs a warning when Content-Length does not match body length', () => {
     const { logger, entries } = createLogCapture();
 
-    logContentLengthMismatch(
-      logger,
-      context,
-      { 'Content-Length': '10' },
-      Buffer.from('12345'),
-    );
+    logContentLengthMismatch(logger, context, { 'Content-Length': '10' }, Buffer.from('12345'));
 
     expect(entries).toEqual([
       expect.objectContaining({

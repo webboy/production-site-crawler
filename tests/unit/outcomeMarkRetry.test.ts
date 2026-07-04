@@ -24,9 +24,7 @@ describe('withOutcomeMarkRetry', () => {
       throw new Error('persistent');
     });
 
-    await expect(
-      withOutcomeMarkRetry(operation, () => {}, 2),
-    ).rejects.toThrow('persistent');
+    await expect(withOutcomeMarkRetry(operation, () => {}, 2)).rejects.toThrow('persistent');
     expect(operation).toHaveBeenCalledTimes(2);
   });
 });

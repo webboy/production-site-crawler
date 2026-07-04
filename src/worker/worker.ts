@@ -141,11 +141,8 @@ export async function runWorker(deps: WorkerDependencies): Promise<void> {
     let limitDecision;
 
     try {
-      limitDecision = await runInfraOperation(
-        'shouldStop',
-        deps,
-        infraState,
-        async () => safetyLimits.shouldStop(),
+      limitDecision = await runInfraOperation('shouldStop', deps, infraState, async () =>
+        safetyLimits.shouldStop(),
       );
     } catch {
       break;

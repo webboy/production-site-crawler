@@ -1,10 +1,6 @@
 import { InvalidArgumentError } from 'commander';
 import { describe, expect, it } from 'vitest';
-import {
-  parseConcurrency,
-  parseMaxDepth,
-  parseUnlimitedOrPositive,
-} from '../../src/cli/crawl.js';
+import { parseConcurrency, parseMaxDepth, parseUnlimitedOrPositive } from '../../src/cli/crawl.js';
 
 describe('crawl CLI parsers', () => {
   it('rejects zero concurrency', () => {

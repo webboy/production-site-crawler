@@ -167,8 +167,8 @@ describe('HtmlHandler', () => {
       ]),
     );
 
-    expect(
-      result.discovered?.some((link) => link.normalizedUrl.includes('cdn.example.com')),
-    ).toBe(false);
+    expect(result.discovered?.some((link) => link.normalizedUrl.includes('cdn.example.com'))).toBe(
+      false,
+    );
   });
 });

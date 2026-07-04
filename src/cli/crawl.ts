@@ -107,16 +107,6 @@ function parseUrl(value: string): string {
   }
 }
 
-function parseNonNegativeNumber(value: string): number {
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new InvalidArgumentError('value must be a non-negative number');
-  }
-
-  return parsed;
-}
-
 function parseUuid(value: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
     throw new InvalidArgumentError('resume must be a valid UUID run id');
@@ -221,15 +211,9 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
           resumeResult = await crawlRunService.resumeRun(options.resume, {
             overrides: {
               concurrency: options.concurrency,
-              maxUrls: isCliOption(command, 'maxUrls')
-                ? options.maxUrls
-                : undefined,
-              maxDepth: isCliOption(command, 'maxDepth')
-                ? options.maxDepth
-                : undefined,
-              maxBytes: isCliOption(command, 'maxBytes')
-                ? options.maxBytes
-                : undefined,
+              maxUrls: isCliOption(command, 'maxUrls') ? options.maxUrls : undefined,
+              maxDepth: isCliOption(command, 'maxDepth') ? options.maxDepth : undefined,
+              maxBytes: isCliOption(command, 'maxBytes') ? options.maxBytes : undefined,
               maxRuntimeSeconds: isCliOption(command, 'maxRuntimeSeconds')
                 ? options.maxRuntimeSeconds
                 : undefined,
@@ -263,20 +247,16 @@ export function registerCrawlCommand(program: Command, config: AppConfig): void 
         } else {
           run = await crawlRunService.createRun(options.seed as string, {
             concurrency: options.concurrency ?? config.crawl.concurrency,
-            maxUrls: resolveConfiguredLimit(
-              options.maxUrls,
-              config.crawl.maxUrls,
-              (value) => parseUnlimitedOrPositive(value, 'max-urls'),
+            maxUrls: resolveConfiguredLimit(options.maxUrls, config.crawl.maxUrls, (value) =>
+              parseUnlimitedOrPositive(value, 'max-urls'),
             ),
             maxDepth: resolveConfiguredLimit(
               options.maxDepth,
               config.crawl.maxDepth,
               parseMaxDepth,
             ),
-            maxBytes: resolveConfiguredLimit(
-              options.maxBytes,
-              config.crawl.maxBytes,
-              (value) => parseUnlimitedOrPositive(value, 'max-bytes'),
+            maxBytes: resolveConfiguredLimit(options.maxBytes, config.crawl.maxBytes, (value) =>
+              parseUnlimitedOrPositive(value, 'max-bytes'),
             ),
             maxRuntimeSeconds: resolveConfiguredLimit(
               options.maxRuntimeSeconds,

@@ -84,11 +84,7 @@ export class HtmlHandler implements ContentHandler {
     const title = $('title').first().text().trim();
     const discovered: DiscoveredLink[] = [];
 
-    const pushDiscovered = (
-      rawHref: string,
-      source: string,
-      anchorText?: string,
-    ): void => {
+    const pushDiscovered = (rawHref: string, source: string, anchorText?: string): void => {
       const normalized = normalizeDiscovered(rawHref, input.basePageUrl);
 
       if ('rejected' in normalized) {

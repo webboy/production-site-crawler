@@ -181,14 +181,20 @@ export class CrawlRunService {
     }
 
     if (run.concurrency < 1) {
-      throw new Error('Run has invalid concurrency; resume requires an explicit concurrency override');
+      throw new Error(
+        'Run has invalid concurrency; resume requires an explicit concurrency override',
+      );
     }
 
     if (explicit.concurrency && overrides.concurrency !== undefined && overrides.concurrency < 1) {
       throw new Error('concurrency must be at least 1');
     }
 
-    if (explicit.outputDir && overrides.outputDir !== undefined && overrides.outputDir !== run.outputDir) {
+    if (
+      explicit.outputDir &&
+      overrides.outputDir !== undefined &&
+      overrides.outputDir !== run.outputDir
+    ) {
       throw new Error(
         `Output directory mismatch: run uses ${run.outputDir}, but ${overrides.outputDir} was requested`,
       );
@@ -202,8 +208,7 @@ export class CrawlRunService {
       maxRuntimeSeconds: explicit.maxRuntimeSeconds ? overrides.maxRuntimeSeconds : undefined,
     };
 
-    const recoveredInProgressCount =
-      await this.frontierRepository.recoverAllInProgress(runId);
+    const recoveredInProgressCount = await this.frontierRepository.recoverAllInProgress(runId);
 
     const resumedRun = await this.runRepository.markRunning(runId, configUpdates);
 

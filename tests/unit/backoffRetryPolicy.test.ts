@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CrawlUrlTask } from '../../src/frontier/types.js';
-import {
-  BackoffRetryPolicy,
-  consumesAttemptForReason,
-} from '../../src/worker/RetryPolicy.js';
+import { BackoffRetryPolicy, consumesAttemptForReason } from '../../src/worker/RetryPolicy.js';
 
 function createTask(attemptCount: number, maxAttempts = 5): CrawlUrlTask {
   return {

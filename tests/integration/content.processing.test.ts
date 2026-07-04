@@ -203,7 +203,7 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
     const targetUrl = 'https://example.com/dedup-target';
     const targetNormalized = 'https://example.com/dedup-target';
 
-    const { runId } = await runCrawlWithMocks({
+    const { summary, runId } = await runCrawlWithMocks({
       seedUrl,
       contentProcessor: createContentProcessor(outputDir),
       mockResponses: {
@@ -269,6 +269,8 @@ describe.skipIf(!databaseReachable)('content processing integration', () => {
         [runId, targetNormalized],
       );
 
+      expect(summary.statusCounts.permanent_failed).toBe(0);
+      expect(summary.statusCounts.done).toBeGreaterThanOrEqual(3);
       expect(Number(targetRows.rows[0]?.count)).toBe(1);
       expect(Number(contentRows.rows[0]?.count)).toBe(1);
       expect(edgeDetails.rows).toHaveLength(2);

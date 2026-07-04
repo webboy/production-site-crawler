@@ -284,7 +284,7 @@ const retry = { maxAttempts: 5, baseDelayMs: 5_000, maxDelayMs: 300_000, jitterR
 // Budget-consuming: delay = min(base * 2^attemptCount, max) with ±jitterRatio
 // 429: Retry-After header or 5s fallback (no exponential backoff on attempt_count)
 ```
-RateLimiter: fixed concurrency + a small inter-request delay. On 429 it reads `Retry-After` and **globally pauses** all workers until it elapses, then resumes, because the Fetch API is the shared bottleneck. Token buckets / per-domain / distributed limiting are production extensions.
+RateLimiter: fixed concurrency + a small inter-request delay. CLI crawls use `GlobalPauseRateLimiter`, configured with `RATE_LIMIT_DELAY_MS` for baseline pacing before every claim/fetch cycle and `RATE_LIMIT_DEFAULT_PAUSE_MS` as the fallback global pause when a 429 response lacks `Retry-After`. On 429 the worker marks the URL `retryable_failed` without consuming its attempt budget, asks the retry policy to schedule the URL (honoring `Retry-After` when present), and calls `onRateLimited`. The limiter parses `Retry-After` and **globally pauses** all workers until the longest observed pause elapses, because the Fetch API is the shared bottleneck. Token buckets / per-domain / distributed limiting are production extensions.
 
 ---
 
@@ -346,13 +346,13 @@ Hash-based names are filesystem-safe, collision-free, stable per normalized URL,
 
 ## 12. Resumability & termination
 
-**Resume:** the DB is the source of truth for run configuration (`concurrency`, limits, `scope_policy`, `output_dir`). On resume, persisted values are used unless the CLI explicitly overrides selected limits or concurrency; conflicting `--output-dir` values are rejected because `contents.file_path` is relative to the persisted output root. Explicit unlimited overrides (`unlimited` / `none`) are stored as `NULL`, while an omitted flag leaves the persisted value unchanged.
+**Resume:** the DB is the source of truth for run configuration (`concurrency`, limits, `scope_policy`, `output_dir`). On resume, persisted values are used unless the CLI explicitly overrides selected limits or concurrency; conflicting `--output-dir` values are rejected because `contents.file_path` is relative to the persisted output root. Explicit unlimited overrides (`unlimited` / `none`; for `--max-urls` also `0`) are stored as `NULL`, while an omitted flag leaves the persisted value unchanged.
 
-Resumable run statuses are `running`, `paused`, and `failed`. `failed` represents infrastructure failure after repeated DB/disk errors; the durable crawl state is still the source of truth, so it resumes like `paused`. `completed`, `completed_with_failures`, and `cancelled` remain terminal. `limit_reached` is resumable only when the caller provides an explicit increased limit override; changing a finite limit to unlimited counts as an increase. For `max_runtime_seconds`, the same explicit value is accepted because runtime is a per-session budget and resume starts a fresh session. Resume sets status back to `running`, clears `finished_at`, and immediately reclaims all `in_progress` rows for that run to `queued`. A stale `in_progress` recovery helper exists for future crash-recovery wiring, but the active resume/crawl path uses immediate full reclaim via `recoverAllInProgress`. `done` URLs are never reprocessed.
+Resumable run statuses are `paused` and `failed`. `failed` represents infrastructure failure after repeated DB/disk errors; the durable crawl state is still the source of truth, so it resumes like `paused`. `completed`, `completed_with_failures`, and `cancelled` remain terminal. `running` is treated as already claimed, which prevents two concurrent `--resume <run-id>` processes from owning the same frontier. `limit_reached` is resumable only when the caller provides an explicit increased limit override; changing a finite limit to unlimited counts as an increase. For `max_runtime_seconds`, the same explicit value is accepted because runtime is a per-session budget and resume starts a fresh session. Resume first performs an atomic conditional transition to `running` for the previously observed status; only the winning process clears `finished_at` and then reclaims all `in_progress` rows for that run to `queued`. A stale `in_progress` recovery helper exists for future crash-recovery wiring, but the active resume/crawl path uses immediate full reclaim via `recoverAllInProgress`. `done` URLs are never reprocessed.
 
 **Graceful stop:** SIGINT/SIGTERM request shutdown, workers finish in-flight work, and the run is finalized as `paused` (explicitly resumable). `cancelled` remains a terminal status for future explicit cancel/admin flows.
 
-**Termination (D6):** a worker exits only when all hold: `claimNextUrl` returns null, no `retryable_failed` has a future `next_attempt_at`, and no rows are `in_progress`. Otherwise it sleeps briefly and re-polls. The run is finalized `completed` / `completed_with_failures` / `limit_reached` / `paused`.
+**Termination (D6):** a worker exits only when all hold: `claimNextUrl` returns null, no `queued` work remains, no `retryable_failed` has a future `next_attempt_at`, and no rows are `in_progress`. Otherwise it sleeps briefly and re-polls. The run is finalized `completed` / `completed_with_failures` / `limit_reached` / `paused`.
 
 ---
 
@@ -367,7 +367,7 @@ Resumable run statuses are `running`, `paused`, and `failed`. `failed` represent
 | `max_bytes` | Max persisted bytes | Best-effort in-memory check before claim |
 | `max_runtime_seconds` | Per-session runtime budget | Timer before claim |
 
-`null` (or CLI `unlimited`/`none`) means no limit for URLs/bytes/runtime. Only `max_depth=0` treats zero as a meaningful constraint; other limits reject `0`. URL/depth/byte limits are cumulative across pause/resume via persisted DB state. `max_runtime_seconds` is **per-session**: each worker-pool session starts a fresh timer. On breach: stop claiming, let in-flight work finish, mark `limit_reached`, leave queued URLs in the DB (resumable with an explicit increased limit override).
+`null` (or CLI `unlimited`/`none`) means no limit for URLs/bytes/runtime. `MAX_URLS=0`, an empty `MAX_URLS`, and `--max-urls 0` also mean unlimited so environment-based configuration can express `max_urls = NULL`. Only `max_depth=0` treats zero as a meaningful constraint; other byte/runtime limits reject `0`. URL/depth/byte limits are cumulative across pause/resume via persisted DB state. `max_runtime_seconds` is **per-session**: each worker-pool session starts a fresh timer. On breach: stop claiming, let in-flight work finish, mark `limit_reached`, leave queued URLs in the DB (resumable with an explicit increased limit override).
 
 ---
 

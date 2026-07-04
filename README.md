@@ -36,6 +36,10 @@ npm run crawl -- --resume=<run-id>
 
 Resume loads persisted run config from Postgres. You may override selected limits or `--concurrency`; conflicting `--output-dir` is rejected. SIGINT/SIGTERM pauses the run (`paused`). `--body-strategy` / `FETCH_BODY_STRATEGY` control Fetch API body decoding (`auto` default).
 
+Limits can be set with CLI flags or env defaults. `--max-urls 0`, `--max-urls unlimited`, `--max-urls none`, `MAX_URLS=0`, and an empty `MAX_URLS` all mean no URL cap. `--max-depth 0` still means seed-only. Runs in `paused` or `failed` can be resumed; `limit_reached` requires an explicit increased limit override, and a concurrent resume of an already `running` run is rejected.
+
+Rate limiting uses baseline pacing plus a global pause for shared Fetch API throttling. `RATE_LIMIT_DELAY_MS` delays each worker loop, `RATE_LIMIT_DEFAULT_PAUSE_MS` is used when a 429 response has no `Retry-After`, and a present `Retry-After` pauses all workers until it elapses.
+
 Global install after build/publish:
 
 ```sh

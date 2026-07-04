@@ -108,6 +108,11 @@ export interface MarkRedirectedInput {
   httpStatusCode: number;
 }
 
+export interface RequeueRedirectInput {
+  url: string;
+  httpStatusCode: number;
+}
+
 export type StatusCounts = Record<CrawlUrlStatus, number>;
 
 export function mapCrawlUrlRow(row: CrawlUrlRow): CrawlUrlTask {

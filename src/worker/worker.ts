@@ -286,6 +286,29 @@ async function markPermanentFailureWithRetry(
   );
 }
 
+async function requeueSelfRedirectWithRetry(
+  deps: WorkerDependencies,
+  task: CrawlUrlTask,
+  input: { httpStatusCode: number; location: string },
+): Promise<void> {
+  await withOutcomeMarkRetry(
+    () =>
+      deps.frontier.requeueForRedirect(task.id, {
+        url: input.location,
+        httpStatusCode: input.httpStatusCode,
+      }),
+    (attempt, error) => {
+      deps.logger.warn({
+        event: 'task_outcome_mark_failed',
+        runId: deps.run.id,
+        urlId: task.id,
+        attempt,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    },
+  );
+}
+
 export function logContentLengthMismatch(
   logger: Logger,
   context: { runId: string; urlId: string; url: string },
@@ -659,18 +682,11 @@ async function handleRedirect(
   const normalized = normalizeDiscovered(location, task.url);
 
   if ('rejected' in normalized) {
-    await withOutcomeMarkRetry(
-      () => deps.frontier.markRedirected(task.id, { httpStatusCode: response.statusCode }),
-      (attempt, error) => {
-        deps.logger.warn({
-          event: 'task_outcome_mark_failed',
-          runId: deps.run.id,
-          urlId: task.id,
-          attempt,
-          cause: error instanceof Error ? error.message : String(error),
-        });
-      },
-    );
+    await markPermanentFailureWithRetry(deps, task, {
+      httpStatusCode: response.statusCode,
+      lastError: `Redirect response contains invalid Location header: ${location}`,
+      lastErrorType: 'redirect_invalid_location',
+    });
 
     deps.logger.info({
       event: 'redirect_rejected',
@@ -679,6 +695,24 @@ async function handleRedirect(
       statusCode: response.statusCode,
       reason: normalized.rejected,
       location,
+    });
+
+    return;
+  }
+
+  if (normalized.normalizedUrl === task.normalizedUrl) {
+    await requeueSelfRedirectWithRetry(deps, task, {
+      httpStatusCode: response.statusCode,
+      location: normalized.url,
+    });
+
+    deps.logger.info({
+      event: 'redirect_self',
+      runId: deps.run.id,
+      urlId: task.id,
+      statusCode: response.statusCode,
+      location: normalized.url,
+      redirectCount: task.redirectCount + 1,
     });
 
     return;
@@ -702,6 +736,24 @@ async function handleRedirect(
   );
 
   applyEdgeDecision(deps, edgeDecision);
+
+  if (edgeDecision.toUrlId === task.id) {
+    await requeueSelfRedirectWithRetry(deps, task, {
+      httpStatusCode: response.statusCode,
+      location: normalized.url,
+    });
+
+    deps.logger.info({
+      event: 'redirect_self',
+      runId: deps.run.id,
+      urlId: task.id,
+      statusCode: response.statusCode,
+      location: normalized.url,
+      redirectCount: task.redirectCount + 1,
+    });
+
+    return;
+  }
 
   if (edgeDecision.limitReached) {
     deps.logger.info({

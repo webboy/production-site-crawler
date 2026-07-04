@@ -12,6 +12,7 @@ import type {
   MarkRedirectedInput,
   MarkSkippedUnsupportedInput,
   MarkSucceededInput,
+  RequeueRedirectInput,
   StatusCounts,
 } from './types.js';
 import { mapCrawlUrlRow } from './types.js';
@@ -313,6 +314,24 @@ export class FrontierRepository {
         WHERE id = $1
       `,
       [taskId, input.httpStatusCode],
+    );
+  }
+
+  async requeueForRedirect(taskId: string, input: RequeueRedirectInput): Promise<void> {
+    await this.pool.query(
+      `
+        UPDATE crawl_urls
+        SET status = 'queued',
+            url = $2,
+            http_status_code = $3,
+            redirect_count = redirect_count + 1,
+            next_attempt_at = now(),
+            claimed_at = NULL,
+            finished_at = NULL,
+            updated_at = now()
+        WHERE id = $1
+      `,
+      [taskId, input.url, input.httpStatusCode],
     );
   }
 
